@@ -1,6 +1,6 @@
 # 发票整理助手
 
-面向 Windows 的本地发票、支付截图、报销明细核算和 ZIP 导出工具，使用 Electron、React、TypeScript 和 Fluent UI 开发。
+本地桌面端发票、支付截图、报销明细核算和 ZIP 导出工具，使用 Electron、React、TypeScript 和 Fluent UI 开发。
 
 ## 初版功能
 
