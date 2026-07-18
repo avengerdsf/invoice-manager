@@ -1,0 +1,16 @@
+{
+  "model": "PP-OCRv6 tiny",
+  "engine": "onnxruntime-web/wasm",
+  "amountField": "价税合计（小写）",
+  "detection": {
+    "threshold": 0.2,
+    "boxThreshold": 0.4,
+    "maxSide": 1600
+  },
+  "recognition": {
+    "height": 48,
+    "minimumWidth": 320,
+    "maximumWidth": 3200,
+    "characterCount": 6906
+  }
+}

@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+
+# Build and packaging output
+dist/
+dist-electron/
+release/
+out/
+*.exe
+*.msi
+*.AppImage
+*.dmg
+*.blockmap
+
+# Local projects, invoices, OCR samples and benchmark output
+debug/
+*.invoice-project/
+*.invoice-project.zip
+resources/ocr/models/
+tests/
+
+# Local agent and editor state
+.agents/
+.codex/
+.idea/
+.vscode/
+*.code-workspace
+
+# Environment and local configuration
+.env
+.env.*
+!.env.example
+
+# Logs, caches and temporary files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+coverage/
+.nyc_output/
+.cache/
+.vite/
+*.tsbuildinfo
+*.tmp
+*.temp
+*.swp
+*~
+
+# Python tooling used only for OCR benchmarks
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini

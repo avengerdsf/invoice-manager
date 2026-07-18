@@ -1,0 +1,77 @@
+{
+  "name": "invoice-manager",
+  "productName": "发票整理助手",
+  "version": "0.1.0",
+  "private": true,
+  "description": "本地发票与支付截图整理、核算和导出工具",
+  "main": "dist-electron/electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"tsc -p tsconfig.electron.json --watch --preserveWatchOutput\" \"vite --host 127.0.0.1\" \"wait-on tcp:5173 dist-electron/electron/main.js && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron dist-electron/electron/main.js\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "build": "npm run typecheck && vite build && tsc -p tsconfig.electron.json",
+    "test": "vitest run",
+    "ocr:prepare": "bash scripts/prepare-ocr-dataset.sh",
+    "ocr:benchmark": "bash scripts/run-ocr-benchmark.sh",
+    "ocr:benchmark:tiny": "bash scripts/run-ocr-benchmark.sh --variant tiny",
+    "ocr:benchmark:v5-mobile": "bash scripts/run-ocr-benchmark.sh --variant v5-mobile",
+    "dist:win": "npm run build && electron-builder --win nsis"
+  },
+  "build": {
+    "appId": "cn.local.invoice-manager",
+    "productName": "发票整理助手",
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
+  "dependencies": {
+    "@fluentui/react-components": "^9.74.4",
+    "archiver": "^8.0.0",
+    "exceljs": "^4.4.0",
+    "onnxruntime-web": "^1.27.0",
+    "pdfjs-dist": "^6.1.200",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/archiver": "^8.0.0",
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "concurrently": "^10.0.3",
+    "cross-env": "^10.1.0",
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5",
+    "vitest": "^4.1.10",
+    "wait-on": "^9.0.10"
+  },
+  "overrides": {
+    "uuid": "11.1.1"
+  }
+}
