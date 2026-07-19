@@ -20,6 +20,10 @@
     "appId": "cn.local.invoice-manager",
     "productName": "发票整理助手",
     "asar": true,
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
@@ -29,6 +33,7 @@
       "output": "release"
     },
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -39,7 +44,9 @@
       ]
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "include": "build/installer.nsh",
       "perMachine": false,
       "deleteAppDataOnUninstall": false,
       "createDesktopShortcut": true,
@@ -47,16 +54,12 @@
     }
   },
   "dependencies": {
-    "@fluentui/react-components": "^9.74.4",
     "archiver": "^8.0.0",
     "exceljs": "^4.4.0",
-    "onnxruntime-web": "^1.27.0",
-    "pdfjs-dist": "^6.1.200",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@fluentui/react-components": "^9.74.4",
     "@types/archiver": "^8.0.0",
     "@types/node": "^26.1.1",
     "@types/react": "^19.2.17",
@@ -66,6 +69,10 @@
     "cross-env": "^10.1.0",
     "electron": "^43.1.1",
     "electron-builder": "^26.15.3",
+    "onnxruntime-web": "^1.27.0",
+    "pdfjs-dist": "^6.1.200",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
     "typescript": "^7.0.2",
     "vite": "^8.1.5",
     "vitest": "^4.1.10",

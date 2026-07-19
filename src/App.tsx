@@ -11,13 +11,13 @@ import {
   DialogTitle,
   Field,
   Input,
-  Select,
   Spinner,
 } from '@fluentui/react-components'
+import CustomSelect from './components/CustomSelect'
 import { calculateProjectSummary, createExpense, expenseTotalCents, formatMoney } from './domain/project'
 import { recognizeInvoiceAmounts } from './ocr/ocr-client'
 import type { InvoiceAmounts } from './ocr/amount'
-import type { Allocation, AppSettings, Attachment, AttachmentKind, ExpenseItem, Project, ProjectSession } from './shared/models'
+import type { Allocation, AllProjectsFundsSummary, AppSettings, Attachment, AttachmentKind, ExpenseItem, Project, ProjectSession } from './shared/models'
 
 function today(): string {
   return new Date().toISOString().slice(0, 10)
@@ -47,20 +47,32 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [includePayments, setIncludePayments] = useState(true)
   const [summaryOpen, setSummaryOpen] = useState(false)
+  const [summaryTab, setSummaryTab] = useState<'current' | 'all'>('current')
+  const [allProjectsSummary, setAllProjectsSummary] = useState<AllProjectsFundsSummary | null>(null)
+  const [deleteProjectOpen, setDeleteProjectOpen] = useState(false)
   const [exportDialog, setExportDialog] = useState(false)
   const [attachmentDialog, setAttachmentDialog] = useState<{ expenseId: string; kind: AttachmentKind } | null>(null)
+  const [attachmentPreview, setAttachmentPreview] = useState<{ id: string; name: string; mimeType: string; url: string } | null>(null)
   const [removalRequest, setRemovalRequest] = useState<RemovalRequest | null>(null)
   const [ocrOverwriteRequest, setOcrOverwriteRequest] = useState<OcrOverwriteRequest | null>(null)
   const [message, setMessage] = useState('')
-  const [appSettings, setAppSettings] = useState<AppSettings>({ payerNames: [], recentProjects: [], knownProjectPaths: [] })
+  const [appSettings, setAppSettings] = useState<AppSettings>({
+    payerNames: [],
+    recentProjects: [],
+    knownProjectPaths: [],
+    lastImportDirectories: {},
+  })
   const [projectNameDialog, setProjectNameDialog] = useState<string | null>(null)
   const [settingsDialog, setSettingsDialog] = useState<{
     payerNames: string[]
     newPayerName: string
     projectName: string
     categoryName: string
+    newCategoryNames: string[]
     removedCategoryIds: string[]
   } | null>(null)
+  const [categoryDialogOpen, setCategoryDialogOpen] = useState(false)
+  const [settingsPage, setSettingsPage] = useState<'main' | 'payers' | 'categories'>('main')
   const changeVersion = useRef(0)
   const saving = useRef(false)
   const ocrOverwriteResolver = useRef<((overwrite: boolean) => void) | null>(null)
@@ -80,6 +92,12 @@ export default function App() {
     const timer = window.setTimeout(() => setMessage(''), 3500)
     return () => window.clearTimeout(timer)
   }, [message])
+
+  useEffect(() => {
+    return () => {
+      if (attachmentPreview?.url) URL.revokeObjectURL(attachmentPreview.url)
+    }
+  }, [attachmentPreview])
 
   const updateProject = (updater: (draft: Project) => void) => {
     if (!session || session.readOnly) return
@@ -124,7 +142,19 @@ export default function App() {
       changeVersion.current = 0
       setDirty(false)
       setSession(opened)
-      setAppSettings(await window.invoiceManager.getSettings())
+      let settings = await window.invoiceManager.getSettings()
+      const projectPayerNames = [...new Set(
+        opened.project.expenses
+          .map((expense) => expense.actualPayer.trim())
+          .filter(Boolean),
+      )]
+      const missingPayerNames = projectPayerNames.filter((payerName) => !settings.payerNames.includes(payerName))
+      if (missingPayerNames.length > 0) {
+        settings = await window.invoiceManager.saveSettings({
+          payerNames: [...settings.payerNames, ...missingPayerNames],
+        })
+      }
+      setAppSettings(settings)
       setMessage(opened.readOnly ? '项目已被其他进程占用，当前只读打开' : '项目已打开')
     } catch (error) {
       setMessage(`打开失败：${errorMessage(error)}`)
@@ -146,11 +176,13 @@ export default function App() {
   }
 
   const requestOpenSettings = () => {
+    setSettingsPage('main')
     setSettingsDialog({
       payerNames: [...appSettings.payerNames],
       newPayerName: '',
       projectName: project?.name ?? '',
       categoryName: '',
+      newCategoryNames: [],
       removedCategoryIds: [],
     })
   }
@@ -187,14 +219,18 @@ export default function App() {
       })
       const projectName = settingsDialog.projectName.trim()
       const categoryName = settingsDialog.categoryName.trim()
-      if (project && (projectName !== project.name || settingsDialog.removedCategoryIds.length > 0 || categoryName)) {
+      const newCategoryNames = categoryName
+        ? [...settingsDialog.newCategoryNames, categoryName]
+        : settingsDialog.newCategoryNames
+      if (project && (projectName !== project.name || settingsDialog.removedCategoryIds.length > 0 || newCategoryNames.length > 0)) {
         updateProject((draft) => {
           draft.name = projectName
           draft.categories = draft.categories.filter((category) => !settingsDialog.removedCategoryIds.includes(category.id))
-          if (categoryName && !draft.categories.some((category) => category.name === categoryName)) {
+          for (const newCategoryName of newCategoryNames) {
+            if (draft.categories.some((category) => category.name === newCategoryName)) continue
             draft.categories.push({
               id: window.crypto.randomUUID(),
-              name: categoryName,
+              name: newCategoryName,
               color: '#64748b',
               order: draft.categories.length,
             })
@@ -210,6 +246,7 @@ export default function App() {
         )),
       })
       setSettingsDialog(null)
+      setCategoryDialogOpen(false)
       setMessage('设置已保存')
     } catch (error) {
       setMessage(`保存设置失败：${errorMessage(error)}`)
@@ -327,6 +364,48 @@ export default function App() {
     }
   }
 
+  const showAllProjectsSummary = async () => {
+    setBusy(true)
+    try {
+      if (dirty) await save()
+      setAllProjectsSummary(await window.invoiceManager.getAllProjectsSummary())
+      setSummaryOpen(true)
+    } catch (error) {
+      setMessage(`读取全部项目汇总失败：${errorMessage(error)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const deleteCurrentProject = async () => {
+    setBusy(true)
+    try {
+      const settings = await window.invoiceManager.deleteCurrentProject()
+      setSession(null)
+      setDirty(false)
+      setAppSettings(settings)
+      setDeleteProjectOpen(false)
+      setMessage('项目已移入回收站')
+    } catch (error) {
+      setMessage(`删除项目失败：${errorMessage(error)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const previewAttachment = async (attachment: Attachment) => {
+    setBusy(true)
+    try {
+      const source = await window.invoiceManager.readAttachmentPreview(attachment.id)
+      const url = URL.createObjectURL(new Blob([source.data], { type: source.mimeType }))
+      setAttachmentPreview({ id: attachment.id, name: attachment.originalName, mimeType: source.mimeType, url })
+    } catch (error) {
+      setMessage(`预览附件失败：${errorMessage(error)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const confirmRemoval = () => {
     if (!removalRequest) return
     if (removalRequest.kind === 'expense') {
@@ -381,34 +460,36 @@ export default function App() {
         <header className="topbar">
           <div className="toolbar">
             <Button onClick={requestCreateProject}>新建项目</Button>
-            <Select
+            <CustomSelect
               className="project-select"
-              aria-label="切换项目"
               value={session?.rootPath ?? ''}
-              onChange={(event) => {
-                if (event.target.value === '__local__') {
+              onChange={(value) => {
+                if (value === '__local__') {
                   void openSession(() => window.invoiceManager.openProject())
-                } else if (event.target.value) {
-                  void openSession(() => window.invoiceManager.openRecentProject(event.target.value))
+                } else if (value) {
+                  void openSession(() => window.invoiceManager.openRecentProject(value))
                 }
               }}
-            >
-              <option value="__local__">从本地打开…</option>
-              {appSettings.recentProjects.map((recentProject) => (
-                <option key={recentProject.rootPath} value={recentProject.rootPath}>{recentProject.name}</option>
-              ))}
-            </Select>
+              options={[
+                { value: '__local__', label: '从本地打开…' },
+                ...appSettings.recentProjects.map((recentProject) => ({
+                  value: recentProject.rootPath,
+                  label: recentProject.name,
+                })),
+              ]}
+            />
             <Button onClick={() => void window.invoiceManager.revealProject()}>项目目录</Button>
-            <Button appearance="primary" disabled={session?.readOnly || busy} onClick={() => setExportDialog(true)}>导出 ZIP</Button>
             <Button onClick={requestOpenSettings}>设置</Button>
+            <Button disabled={busy} onClick={() => setDeleteProjectOpen(true)}>删除项目</Button>
             {session?.readOnly && <Badge color="danger">只读</Badge>}
             {dirty && !session?.readOnly && <Badge color="warning">未保存</Badge>}
+            <Button className="export-button" appearance="primary" disabled={session?.readOnly || busy} onClick={() => setExportDialog(true)}>导出 ZIP</Button>
           </div>
         </header>
       )}
 
       {!project && <Button className="welcome-settings" appearance="subtle" onClick={requestOpenSettings}>设置</Button>}
-      {(busy || message) && <div className="app-message">{busy && <Spinner size="tiny" />} {message}</div>}
+      {(busy || message) && <div className={`app-message ${project ? 'below-topbar' : ''}`}>{busy && <Spinner size="tiny" />} {message}</div>}
 
       {!project ? (
         <main className="welcome">
@@ -447,7 +528,7 @@ export default function App() {
                 <p>{project.expenses.length} 条明细</p>
               </div>
               <div className="panel-actions">
-                <Button aria-haspopup="dialog" onClick={() => setSummaryOpen(true)}>展开核算</Button>
+                <Button aria-haspopup="dialog" onClick={() => { setSummaryTab('current'); setSummaryOpen(true) }}>资金核算</Button>
                 <Button appearance="primary" disabled={readOnly} onClick={addExpense}>添加明细</Button>
               </div>
             </div>
@@ -462,19 +543,20 @@ export default function App() {
                   <col className="col-total" />
                   <col className="col-payment" />
                   <col className="col-payer" />
-                  <col className="col-note" />
                   <col className="col-reimbursed" />
                   <col className="col-attachment" />
                   <col className="col-attachment" />
+                  <col className="col-note" />
                   <col className="col-actions" />
                 </colgroup>
                 <thead>
                   <tr>
                     <th rowSpan={2}>类别</th><th rowSpan={2}>日期</th><th rowSpan={2}>详细名称</th>
                     <th colSpan={3}>金额</th><th rowSpan={2}>实际付款</th><th rowSpan={2}>实际付款人</th>
-                    <th rowSpan={2}>备注</th><th rowSpan={2}>已报销</th><th className="attachment-column attachment-group-heading" colSpan={3}>附件</th>
+                    <th rowSpan={2}>已报销</th><th className="attachment-column attachment-group-heading" colSpan={2}>附件</th>
+                    <th rowSpan={2}>备注</th><th rowSpan={2} className="action-subheading" aria-label="删除明细" />
                   </tr>
-                  <tr><th>价格</th><th>税费</th><th>总价</th><th className="attachment-column attachment-subheading">发票</th><th className="attachment-subheading">支付截图</th><th className="attachment-subheading action-subheading" aria-label="删除明细" /></tr>
+                  <tr><th>价格</th><th>税费</th><th>总价</th><th className="attachment-column attachment-subheading">发票</th><th className="attachment-subheading">支付截图</th></tr>
                 </thead>
                 <tbody>
                   {project.expenses.map((expense) => (
@@ -503,9 +585,13 @@ export default function App() {
       <Dialog open={summaryOpen} onOpenChange={(_event, data) => setSummaryOpen(data.open)}>
         <DialogSurface className="summary-dialog" backdrop={{ className: 'summary-dialog-backdrop', appearance: 'dimmed' }}>
           <DialogBody>
-            <DialogTitle>总价核算</DialogTitle>
+            <DialogTitle>资金核算</DialogTitle>
             <DialogContent className="summary-dialog-content">
-              {summary && (
+              <div className="summary-tabs" role="tablist">
+                <button type="button" role="tab" aria-selected={summaryTab === 'current'} onClick={() => setSummaryTab('current')}>当前项目</button>
+                <button type="button" role="tab" aria-selected={summaryTab === 'all'} onClick={() => { setSummaryTab('all'); if (!allProjectsSummary) void showAllProjectsSummary() }}>全部项目</button>
+              </div>
+              {summaryTab === 'current' && summary && (
                 <>
                   <div className="summary-metrics">
                     <div className="metric primary-metric"><span>明细总价</span><strong>¥ {formatMoney(summary.totalCents)}</strong></div>
@@ -535,6 +621,28 @@ export default function App() {
                   </div>
                 </>
               )}
+              {summaryTab === 'all' && allProjectsSummary && <>
+                <div className="summary-metrics">
+                  <div className="metric primary-metric"><span>全部项目总额</span><strong>¥ {formatMoney(allProjectsSummary.totalCents)}</strong></div>
+                  <div className="metric"><span>实际付款</span><strong>¥ {formatMoney(allProjectsSummary.actualPaymentCents)}</strong></div>
+                  <div className="metric success"><span>有发票金额</span><strong>¥ {formatMoney(allProjectsSummary.invoicedCents)}</strong></div>
+                  <div className="metric warning"><span>无发票金额</span><strong>¥ {formatMoney(allProjectsSummary.uninvoicedCents)}</strong></div>
+                  <div className="metric"><span>已报销金额</span><strong>¥ {formatMoney(allProjectsSummary.reimbursedCents)}</strong></div>
+                </div>
+                <section className="all-projects-section">
+                  <h3>付款人未报销资金</h3>
+                  <div className="all-projects-list payer-summary-list">
+                    {allProjectsSummary.payers.map((item) => <div key={item.payerName} className="all-project-row payer-summary-row">
+                      <span><strong>{item.payerName}</strong></span><span>垫付总额<strong>¥ {formatMoney(item.totalCents)}</strong></span><span>已报销<strong>¥ {formatMoney(item.reimbursedCents)}</strong></span><span className="unreimbursed-value">尚未报销<strong>¥ {formatMoney(item.unreimbursedCents)}</strong></span>
+                    </div>)}
+                    {!allProjectsSummary.payers.length && <p>暂无付款人资金记录</p>}
+                  </div>
+                </section>
+                <section className="all-projects-section"><h3>{allProjectsSummary.projects.length} 个项目</h3><div className="all-projects-list">
+                  {allProjectsSummary.projects.map((item) => <div key={item.rootPath} className="all-project-row"><span><strong>{item.name}</strong><small>{item.expenseCount} 条明细</small></span><span>总额<strong>¥ {formatMoney(item.totalCents)}</strong></span><span>已报销<strong>¥ {formatMoney(item.reimbursedCents)}</strong></span></div>)}
+                  {!allProjectsSummary.projects.length && <p>暂无可汇总项目</p>}
+                </div></section>
+              </>}
             </DialogContent>
             <DialogActions>
               <Button appearance="primary" onClick={() => setSummaryOpen(false)}>关闭</Button>
@@ -582,8 +690,12 @@ export default function App() {
       >
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>设置</DialogTitle>
+            <DialogTitle className="settings-dialog-title">
+              {settingsPage !== 'main' && <button className="settings-back-button" type="button" aria-label="返回设置" onClick={() => setSettingsPage('main')}>‹</button>}
+              {settingsPage === 'main' ? '设置' : settingsPage === 'payers' ? '全局付款人' : '管理项目类别'}
+            </DialogTitle>
             <DialogContent>
+              {settingsPage === 'payers' && <div className="settings-subpage">
               <Field
                 label="添加全局付款人"
                 validationState={settingsDialog?.payerNames.includes(settingsDialog.newPayerName.trim()) ? 'error' : 'none'}
@@ -616,7 +728,8 @@ export default function App() {
                 })}
                 {!settingsDialog?.payerNames.length && <p>暂无付款人</p>}
               </div>
-              {project && (
+              </div>}
+              {settingsPage === 'main' && project && (
                 <div className="settings-section">
                   <Field
                     label="当前项目名称"
@@ -630,46 +743,42 @@ export default function App() {
                       onChange={(_event, data) => setSettingsDialog((current) => current ? { ...current, projectName: data.value } : current)}
                     />
                   </Field>
-                  <strong>当前项目类别</strong>
-                  <div className="settings-list">
-                    {project.categories
-                      .filter((category) => !settingsDialog?.removedCategoryIds.includes(category.id))
-                      .map((category) => {
-                        const usageCount = project.expenses.filter((expense) => expense.categoryId === category.id).length
-                        const remainingCount = project.categories.length - (settingsDialog?.removedCategoryIds.length ?? 0)
-                        return (
-                          <div key={category.id}>
-                            <span>{category.name}{usageCount > 0 ? ` · ${usageCount} 条明细使用中` : ''}</span>
-                            <Button
-                              size="small"
-                              disabled={usageCount > 0 || remainingCount <= 1}
-                              onClick={() => setSettingsDialog((current) => current ? {
-                                ...current,
-                                removedCategoryIds: [...current.removedCategoryIds, category.id],
-                              } : current)}
-                            >
-                              删除
-                            </Button>
-                          </div>
-                        )
-                      })}
-                  </div>
-                  <Field
-                    label="添加类别"
-                    validationState={project.categories.some((category) => category.name === settingsDialog?.categoryName.trim() && !settingsDialog.removedCategoryIds.includes(category.id)) ? 'error' : 'none'}
-                    validationMessage={project.categories.some((category) => category.name === settingsDialog?.categoryName.trim() && !settingsDialog.removedCategoryIds.includes(category.id)) ? '该类别已存在' : undefined}
-                  >
-                    <Input
-                      disabled={readOnly}
-                      maxLength={40}
-                      value={settingsDialog?.categoryName ?? ''}
-                      onChange={(_event, data) => setSettingsDialog((current) => current ? { ...current, categoryName: data.value } : current)}
-                    />
-                  </Field>
+                  <button type="button" className="settings-nav-row" onClick={() => setSettingsPage('payers')}>
+                    <span><strong>全局付款人</strong><small>{settingsDialog?.payerNames.length ?? 0} 人</small></span>
+                    <span className="settings-chevron" aria-hidden="true">›</span>
+                  </button>
+                  <button type="button" className="settings-nav-row" disabled={readOnly} onClick={() => setSettingsPage('categories')}>
+                    <span>
+                      <strong>项目类别</strong>
+                      <small>{project.categories.length - (settingsDialog?.removedCategoryIds.length ?? 0) + (settingsDialog?.newCategoryNames.length ?? 0)} 个类别</small>
+                    </span>
+                    <span className="settings-chevron" aria-hidden="true">›</span>
+                  </button>
                 </div>
               )}
+              {settingsPage === 'main' && !project && <button type="button" className="settings-nav-row" onClick={() => setSettingsPage('payers')}><span><strong>全局付款人</strong><small>{settingsDialog?.payerNames.length ?? 0} 人</small></span><span className="settings-chevron">›</span></button>}
+              {settingsPage === 'categories' && project && settingsDialog && <div className="settings-subpage category-manager-content">
+                <Field
+                  label="添加类别"
+                  validationState={(project.categories.some((category) => category.name === settingsDialog.categoryName.trim() && !settingsDialog.removedCategoryIds.includes(category.id)) || settingsDialog.newCategoryNames.includes(settingsDialog.categoryName.trim())) ? 'error' : 'none'}
+                  validationMessage={(project.categories.some((category) => category.name === settingsDialog.categoryName.trim() && !settingsDialog.removedCategoryIds.includes(category.id)) || settingsDialog.newCategoryNames.includes(settingsDialog.categoryName.trim())) ? '该类别已存在' : undefined}
+                >
+                  <div className="settings-input-row">
+                    <Input autoFocus maxLength={40} value={settingsDialog.categoryName} onChange={(_event, data) => setSettingsDialog((current) => current ? { ...current, categoryName: data.value } : current)} />
+                    <Button appearance="primary" disabled={!settingsDialog.categoryName.trim() || project.categories.some((category) => category.name === settingsDialog.categoryName.trim() && !settingsDialog.removedCategoryIds.includes(category.id)) || settingsDialog.newCategoryNames.includes(settingsDialog.categoryName.trim())} onClick={() => setSettingsDialog((current) => current ? { ...current, newCategoryNames: [...current.newCategoryNames, current.categoryName.trim()], categoryName: '' } : current)}>添加</Button>
+                  </div>
+                </Field>
+                <div className="category-manager-list settings-list">
+                  {settingsDialog.newCategoryNames.map((categoryName) => <div key={`new-${categoryName}`}><span><strong>{categoryName}</strong><small>新增，保存设置后生效</small></span><Button size="small" onClick={() => setSettingsDialog((current) => current ? { ...current, newCategoryNames: current.newCategoryNames.filter((name) => name !== categoryName) } : current)}>移除</Button></div>)}
+                  {project.categories.filter((category) => !settingsDialog.removedCategoryIds.includes(category.id)).map((category) => {
+                    const usageCount = project.expenses.filter((expense) => expense.categoryId === category.id).length
+                    const remainingCount = project.categories.length - settingsDialog.removedCategoryIds.length
+                    return <div key={category.id}><span><strong>{category.name}</strong>{usageCount > 0 ? <small>{usageCount} 条明细使用中</small> : <small>尚未使用</small>}</span><Button size="small" disabled={usageCount > 0 || remainingCount <= 1} onClick={() => setSettingsDialog((current) => current ? { ...current, removedCategoryIds: [...current.removedCategoryIds, category.id] } : current)}>删除</Button></div>
+                  })}
+                </div>
+              </div>}
             </DialogContent>
-            <DialogActions>
+            {settingsPage === 'main' && <DialogActions>
               <Button appearance="secondary" onClick={() => setSettingsDialog(null)}>取消</Button>
               <Button
                 appearance="primary"
@@ -682,7 +791,7 @@ export default function App() {
               >
                 保存
               </Button>
-            </DialogActions>
+            </DialogActions>}
           </DialogBody>
         </DialogSurface>
       </Dialog>
@@ -719,7 +828,14 @@ export default function App() {
                     .filter((attachment): attachment is Attachment => Boolean(attachment))
                   return items.length ? items.map((attachment) => (
                     <div key={attachment.id}>
-                      <span title={attachment.originalName}>{attachment.originalName}</span>
+                      <button
+                        type="button"
+                        className="attachment-name-button"
+                        title={`预览 ${attachment.originalName}`}
+                        onClick={() => void previewAttachment(attachment)}
+                      >
+                        {attachment.originalName}
+                      </button>
                       <div className="attachment-actions">
                         <Button size="small" onClick={() => void openAttachment(attachment.id)}>打开</Button>
                         <Button
@@ -748,6 +864,123 @@ export default function App() {
                 添加附件
               </Button>
               <Button appearance="primary" onClick={() => setAttachmentDialog(null)}>完成</Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+      <Dialog open={false}>
+        <DialogSurface className="category-manager-dialog">
+          <DialogBody>
+            <DialogTitle className="settings-dialog-title"><button className="settings-back-button" type="button" aria-label="返回设置" onClick={() => setCategoryDialogOpen(false)}>‹</button>管理项目类别</DialogTitle>
+            <DialogContent className="category-manager-content">
+              {project && settingsDialog && <>
+                <Field
+                  label="添加类别"
+                  validationState={(project.categories.some((category) => category.name === settingsDialog.categoryName.trim() && !settingsDialog.removedCategoryIds.includes(category.id)) || settingsDialog.newCategoryNames.includes(settingsDialog.categoryName.trim())) ? 'error' : 'none'}
+                  validationMessage={(project.categories.some((category) => category.name === settingsDialog.categoryName.trim() && !settingsDialog.removedCategoryIds.includes(category.id)) || settingsDialog.newCategoryNames.includes(settingsDialog.categoryName.trim())) ? '该类别已存在' : undefined}
+                >
+                  <div className="settings-input-row">
+                    <Input
+                      autoFocus
+                      maxLength={40}
+                      value={settingsDialog.categoryName}
+                      onChange={(_event, data) => setSettingsDialog((current) => current ? { ...current, categoryName: data.value } : current)}
+                    />
+                    <Button
+                      appearance="primary"
+                      disabled={!settingsDialog.categoryName.trim() || project.categories.some((category) => category.name === settingsDialog.categoryName.trim() && !settingsDialog.removedCategoryIds.includes(category.id)) || settingsDialog.newCategoryNames.includes(settingsDialog.categoryName.trim())}
+                      onClick={() => setSettingsDialog((current) => current ? { ...current, newCategoryNames: [...current.newCategoryNames, current.categoryName.trim()], categoryName: '' } : current)}
+                    >添加</Button>
+                  </div>
+                </Field>
+                <div className="category-manager-list settings-list">
+                  {settingsDialog.newCategoryNames.map((categoryName) => <div key={`new-${categoryName}`}>
+                    <span><strong>{categoryName}</strong><small>新增，保存设置后生效</small></span>
+                    <Button size="small" onClick={() => setSettingsDialog((current) => current ? { ...current, newCategoryNames: current.newCategoryNames.filter((name) => name !== categoryName) } : current)}>移除</Button>
+                  </div>)}
+                  {project.categories.filter((category) => !settingsDialog.removedCategoryIds.includes(category.id)).map((category) => {
+                    const usageCount = project.expenses.filter((expense) => expense.categoryId === category.id).length
+                    const remainingCount = project.categories.length - settingsDialog.removedCategoryIds.length
+                    return <div key={category.id}>
+                      <span><strong>{category.name}</strong>{usageCount > 0 ? <small>{usageCount} 条明细使用中</small> : <small>尚未使用</small>}</span>
+                      <Button size="small" disabled={usageCount > 0 || remainingCount <= 1} onClick={() => setSettingsDialog((current) => current ? { ...current, removedCategoryIds: [...current.removedCategoryIds, category.id] } : current)}>删除</Button>
+                    </div>
+                  })}
+                </div>
+              </>}
+            </DialogContent>
+            <DialogActions><Button appearance="primary" onClick={() => setCategoryDialogOpen(false)}>完成</Button></DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+      <Dialog open={false}>
+        <DialogSurface className="summary-dialog">
+          <DialogBody>
+            <DialogTitle>全部项目资金汇总</DialogTitle>
+            <DialogContent className="summary-dialog-content">
+              {allProjectsSummary && <>
+                <div className="summary-metrics">
+                  <div className="metric primary-metric"><span>全部项目总额</span><strong>¥ {formatMoney(allProjectsSummary.totalCents)}</strong></div>
+                  <div className="metric"><span>实际付款</span><strong>¥ {formatMoney(allProjectsSummary.actualPaymentCents)}</strong></div>
+                  <div className="metric success"><span>有发票金额</span><strong>¥ {formatMoney(allProjectsSummary.invoicedCents)}</strong></div>
+                  <div className="metric warning"><span>无发票金额</span><strong>¥ {formatMoney(allProjectsSummary.uninvoicedCents)}</strong></div>
+                  <div className="metric"><span>已报销金额</span><strong>¥ {formatMoney(allProjectsSummary.reimbursedCents)}</strong></div>
+                </div>
+                <section className="all-projects-section">
+                  <h3>付款人未报销资金</h3>
+                  <div className="all-projects-list payer-summary-list">
+                    {allProjectsSummary.payers.map((item) => <div key={item.payerName} className="all-project-row payer-summary-row">
+                      <span><strong>{item.payerName}</strong></span>
+                      <span>垫付总额<strong>¥ {formatMoney(item.totalCents)}</strong></span>
+                      <span>已报销<strong>¥ {formatMoney(item.reimbursedCents)}</strong></span>
+                      <span className="unreimbursed-value">尚未报销<strong>¥ {formatMoney(item.unreimbursedCents)}</strong></span>
+                    </div>)}
+                    {!allProjectsSummary.payers.length && <p>暂无付款人资金记录</p>}
+                  </div>
+                </section>
+                <section className="all-projects-section">
+                  <h3>{allProjectsSummary.projects.length} 个项目</h3>
+                  <div className="all-projects-list">
+                    {allProjectsSummary.projects.map((item) => <div key={item.rootPath} className="all-project-row">
+                      <span><strong>{item.name}</strong><small>{item.expenseCount} 条明细</small></span>
+                      <span>总额<strong>¥ {formatMoney(item.totalCents)}</strong></span>
+                      <span>已报销<strong>¥ {formatMoney(item.reimbursedCents)}</strong></span>
+                    </div>)}
+                    {!allProjectsSummary.projects.length && <p>暂无可汇总项目</p>}
+                  </div>
+                </section>
+              </>}
+            </DialogContent>
+            <DialogActions><Button appearance="primary" onClick={() => setAllProjectsSummary(null)}>关闭</Button></DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+      <Dialog open={deleteProjectOpen} onOpenChange={(_event, data) => setDeleteProjectOpen(data.open)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>删除项目</DialogTitle>
+            <DialogContent>确认删除“{project?.name}”？项目目录及其中的发票、支付截图会移入 Windows 回收站，可从回收站恢复。</DialogContent>
+            <DialogActions>
+              <Button onClick={() => setDeleteProjectOpen(false)}>取消</Button>
+              <Button appearance="primary" disabled={busy} onClick={() => void deleteCurrentProject()}>移入回收站</Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+      <Dialog open={attachmentPreview !== null} onOpenChange={(_event, data) => !data.open && setAttachmentPreview(null)}>
+        <DialogSurface className="attachment-preview-dialog">
+          <DialogBody>
+            <DialogTitle>{attachmentPreview?.name ?? '发票预览'}</DialogTitle>
+            <DialogContent className="attachment-preview-content">
+              {attachmentPreview && (
+                attachmentPreview.mimeType === 'application/pdf'
+                  ? <iframe className="attachment-preview-pdf" src={attachmentPreview.url} title={attachmentPreview.name} />
+                  : <img className="attachment-preview-image" src={attachmentPreview.url} alt={attachmentPreview.name} />
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => attachmentPreview && void openAttachment(attachmentPreview.id)}>用系统程序打开</Button>
+              <Button appearance="primary" onClick={() => setAttachmentPreview(null)}>关闭</Button>
             </DialogActions>
           </DialogBody>
         </DialogSurface>
@@ -810,7 +1043,7 @@ function ExpenseRow({ expense, project, payerNames, readOnly, onUpdate, onRemove
   const paymentCount = allocationCount(project.paymentAllocations, expense.id)
   return (
     <tr>
-      <td><Select size="small" disabled={readOnly} value={expense.categoryId} onChange={(event) => onUpdate(expense.id, 'categoryId', event.target.value)}>{project.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</Select></td>
+      <td><CustomSelect size="small" disabled={readOnly} value={expense.categoryId} onChange={(value) => onUpdate(expense.id, 'categoryId', value)} options={project.categories.map((category) => ({ value: category.id, label: category.name }))} /></td>
       <td><Input disabled={readOnly} type="date" value={expense.date} onChange={(_event, data) => onUpdate(expense.id, 'date', data.value)} /></td>
       <td><Input disabled={readOnly} value={expense.name} placeholder="物品名称" onChange={(_event, data) => onUpdate(expense.id, 'name', data.value)} /></td>
       <td><Input disabled={readOnly} type="number" min={0} step="0.01" value={String(expense.priceCents / 100)} onChange={(_event, data) => onUpdate(expense.id, 'priceCents', toCents(data.value))} /></td>
@@ -818,18 +1051,24 @@ function ExpenseRow({ expense, project, payerNames, readOnly, onUpdate, onRemove
       <td className="money-cell">{formatMoney(expenseTotalCents(expense))}</td>
       <td className="money-cell">{formatMoney(expenseTotalCents(expense))}</td>
       <td>
-        <Select size="small" disabled={readOnly} value={expense.actualPayer} onChange={(event) => onUpdate(expense.id, 'actualPayer', event.target.value)}>
-          <option value="">未设置</option>
-          {payerNames.map((payerName) => <option key={payerName} value={payerName}>{payerName}</option>)}
-          {expense.actualPayer && !payerNames.includes(expense.actualPayer) && (
-            <option value={expense.actualPayer}>{expense.actualPayer}（已停用）</option>
-          )}
-        </Select>
+        <CustomSelect
+          size="small"
+          disabled={readOnly}
+          value={expense.actualPayer}
+          onChange={(value) => onUpdate(expense.id, 'actualPayer', value)}
+          options={[
+            { value: '', label: '未设置' },
+            ...payerNames.map((payerName) => ({ value: payerName, label: payerName })),
+            ...(expense.actualPayer && !payerNames.includes(expense.actualPayer)
+              ? [{ value: expense.actualPayer, label: `${expense.actualPayer}（已停用）` }]
+              : []),
+          ]}
+        />
       </td>
-      <td><Input disabled={readOnly} value={expense.note} onChange={(_event, data) => onUpdate(expense.id, 'note', data.value)} /></td>
       <td className="checkbox-cell"><Checkbox disabled={readOnly} checked={expense.reimbursed} onChange={(_event, data) => onUpdate(expense.id, 'reimbursed', Boolean(data.checked))} /></td>
       <td className="attachment-column attachment-cell-column"><AttachmentCell count={invoiceCount} kind="invoice" readOnly={readOnly} onAttach={() => onAttach(expense.id, 'invoice')} onManage={() => onManage('invoice')} /></td>
       <td className="attachment-cell-column"><AttachmentCell count={paymentCount} kind="payment" readOnly={readOnly} onAttach={() => onAttach(expense.id, 'payment')} onManage={() => onManage('payment')} /></td>
+      <td><Input disabled={readOnly} value={expense.note} onChange={(_event, data) => onUpdate(expense.id, 'note', data.value)} /></td>
       <td className="row-action-cell">
         <button className="row-delete" type="button" aria-label="删除明细" title="删除明细" disabled={readOnly} onClick={() => onRemove(expense.id)}>
           <svg aria-hidden="true" viewBox="0 0 16 16">

@@ -5,6 +5,7 @@ import {
   AppSettingsUpdateSchema,
   ProjectSchema,
   type AppSettings,
+  type AttachmentKind,
   type ProjectSession,
 } from '../src/shared/models'
 
@@ -52,6 +53,21 @@ export class AppSettingsStorage {
 
   async isRecentProject(rootPath: string): Promise<boolean> {
     return (await this.read()).recentProjects.some((item) => item.rootPath === rootPath)
+  }
+
+  async forgetProject(rootPath: string): Promise<AppSettings> {
+    const settings = await this.read()
+    settings.recentProjects = settings.recentProjects.filter((item) => item.rootPath !== rootPath)
+    settings.knownProjectPaths = settings.knownProjectPaths.filter((item) => item !== rootPath)
+    await this.write(settings)
+    return settings
+  }
+
+  async rememberImportDirectory(kind: AttachmentKind, directoryPath: string): Promise<AppSettings> {
+    const settings = await this.read()
+    settings.lastImportDirectories[kind] = directoryPath
+    await this.write(settings)
+    return settings
   }
 
   private async assertPayersUnused(settings: AppSettings, payerNames: string[]): Promise<void> {

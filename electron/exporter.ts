@@ -44,48 +44,21 @@ function applyHeaderStyle(cell: ExcelJS.Cell, fill: string): void {
 async function buildWorkbook(project: Project): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook()
   workbook.creator = '发票整理助手'
-  const sheet = workbook.addWorksheet('报销明细表', { views: [{ state: 'frozen', ySplit: 3 }] })
-  sheet.mergeCells('A1:K1')
+  const sheet = workbook.addWorksheet('报销明细表', { views: [{ state: 'frozen', ySplit: 2 }] })
+  sheet.mergeCells('A1:J1')
   sheet.getCell('A1').value = '报销明细表'
   sheet.getCell('A1').font = { size: 16, bold: true }
   sheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' }
-  sheet.mergeCells('A2:A3')
-  sheet.mergeCells('B2:B3')
-  sheet.mergeCells('C2:C3')
-  sheet.mergeCells('D2:F2')
-  sheet.mergeCells('G2:G3')
-  sheet.mergeCells('H2:H3')
-  sheet.mergeCells('I2:I3')
-  sheet.mergeCells('J2:J3')
-  sheet.mergeCells('K2:K3')
-  sheet.getCell('A2').value = '类别'
-  sheet.getCell('B2').value = '日期'
-  sheet.getCell('C2').value = '详细名称'
-  sheet.getCell('D2').value = '金额'
-  sheet.getCell('D3').value = '价格'
-  sheet.getCell('E3').value = '税费'
-  sheet.getCell('F3').value = '总价'
-  sheet.getCell('G2').value = '发票'
-  sheet.getCell('H2').value = '实际付款'
-  sheet.getCell('I2').value = '实际付款人'
-  sheet.getCell('J2').value = '备注'
-  sheet.getCell('K2').value = '已报销'
-  for (const row of sheet.getRows(2, 2) ?? []) {
-    row.eachCell((cell) => applyHeaderStyle(cell, 'FFE2E8F0'))
-  }
+  ;['类别', '日期', '详细名称', '价格', '税费', '总价', '实际付款', '实际付款人', '备注', '已报销']
+    .forEach((value, index) => {
+      const cell = sheet.getCell(2, index + 1)
+      cell.value = value
+      applyHeaderStyle(cell, 'FFE2E8F0')
+    })
 
   const categoryMap = new Map(project.categories.map((item) => [item.id, item.name]))
-  const attachmentMap = new Map(project.attachments.map((item) => [item.id, item]))
-  const invoicesByExpense = new Map<string, string[]>()
-  for (const allocation of project.invoiceAllocations) {
-    const attachment = attachmentMap.get(allocation.attachmentId)
-    if (!attachment) continue
-    const values = invoicesByExpense.get(allocation.expenseId) ?? []
-    values.push(attachment.originalName)
-    invoicesByExpense.set(allocation.expenseId, values)
-  }
   project.expenses.forEach((expense, index) => {
-    const row = sheet.getRow(index + 4)
+    const row = sheet.getRow(index + 3)
     row.values = [
       categoryMap.get(expense.categoryId) ?? '未分类',
       expense.date,
@@ -93,13 +66,12 @@ async function buildWorkbook(project: Project): Promise<Buffer> {
       expense.priceCents / 100,
       expense.taxCents / 100,
       expenseTotalCents(expense) / 100,
-      (invoicesByExpense.get(expense.id) ?? []).join('、') || '无发票',
       expenseTotalCents(expense) / 100,
       expense.actualPayer,
       expense.note,
       expense.reimbursed ? '是' : '否',
     ]
-    ;[4, 5, 6, 8].forEach((column) => {
+    ;[4, 5, 6, 7].forEach((column) => {
       row.getCell(column).numFmt = '0.00'
     })
     row.eachCell((cell) => {
@@ -114,7 +86,7 @@ async function buildWorkbook(project: Project): Promise<Buffer> {
   })
   sheet.columns = [
     { width: 14 }, { width: 13 }, { width: 30 }, { width: 13 }, { width: 13 },
-    { width: 13 }, { width: 28 }, { width: 15 }, { width: 16 }, { width: 30 }, { width: 12 },
+    { width: 13 }, { width: 15 }, { width: 16 }, { width: 30 }, { width: 12 },
   ]
 
   const summary = calculateProjectSummary(project)

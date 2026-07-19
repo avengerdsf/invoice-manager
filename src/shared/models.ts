@@ -79,6 +79,10 @@ export const AppSettingsSchema = z.object({
   payerNames: PayerNamesSchema.default([]),
   recentProjects: z.array(RecentProjectSchema).default([]),
   knownProjectPaths: z.array(z.string().min(1)).default([]),
+  lastImportDirectories: z.object({
+    invoice: z.string().min(1).optional(),
+    payment: z.string().min(1).optional(),
+  }).default({}),
 })
 export type AppSettings = z.infer<typeof AppSettingsSchema>
 
@@ -101,6 +105,34 @@ export interface OcrAttachmentSource {
   data: ArrayBuffer
 }
 
+export interface ProjectFundsSummary {
+  name: string
+  rootPath: string
+  expenseCount: number
+  totalCents: number
+  actualPaymentCents: number
+  invoicedCents: number
+  uninvoicedCents: number
+  reimbursedCents: number
+}
+
+export interface AllProjectsFundsSummary {
+  projects: ProjectFundsSummary[]
+  payers: Array<{
+    payerName: string
+    totalCents: number
+    reimbursedCents: number
+    unreimbursedCents: number
+  }>
+  totalCents: number
+  actualPaymentCents: number
+  invoicedCents: number
+  uninvoicedCents: number
+  reimbursedCents: number
+}
+
+export type AttachmentPreviewSource = OcrAttachmentSource
+
 export const IPC_CHANNELS = {
   getSettings: 'settings:get',
   saveSettings: 'settings:save',
@@ -110,9 +142,12 @@ export const IPC_CHANNELS = {
   saveProject: 'project:save',
   importAttachments: 'attachment:import',
   readAttachmentForOcr: 'attachment:read-for-ocr',
+  readAttachmentPreview: 'attachment:read-preview',
   openAttachment: 'attachment:open',
   revealProject: 'project:reveal',
   exportProject: 'project:export',
+  deleteCurrentProject: 'project:delete-current',
+  getAllProjectsSummary: 'project:summary-all',
 } as const
 
 export interface InvoiceManagerApi {
@@ -124,7 +159,10 @@ export interface InvoiceManagerApi {
   saveProject(project: Project): Promise<Project>
   importAttachments(kind: AttachmentKind): Promise<Attachment[]>
   readAttachmentForOcr(attachmentId: string): Promise<OcrAttachmentSource>
+  readAttachmentPreview(attachmentId: string): Promise<AttachmentPreviewSource>
   openAttachment(attachmentId: string): Promise<void>
   revealProject(): Promise<void>
   exportProject(project: Project, options: ExportOptions): Promise<ExportResult | null>
+  deleteCurrentProject(): Promise<AppSettings>
+  getAllProjectsSummary(): Promise<AllProjectsFundsSummary>
 }

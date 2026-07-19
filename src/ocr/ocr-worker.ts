@@ -37,6 +37,7 @@ interface AssetManifest {
 const DETECTION_MAX_SIDE = 1600
 const DETECTION_THRESHOLD = 0.2
 const BOX_THRESHOLD = 0.4
+const MAX_RECOGNITION_BOXES = 160
 let runtimePromise: Promise<OcrRuntime> | null = null
 let releaseTimer: ReturnType<typeof setTimeout> | null = null
 let taskQueue = Promise.resolve()
@@ -51,11 +52,17 @@ function hexDigest(buffer: ArrayBuffer): Promise<string> {
   ))
 }
 
+function checksumBuffer(name: string, buffer: ArrayBuffer): ArrayBuffer {
+  if (!name.endsWith('.txt') && !name.endsWith('.mjs')) return buffer
+  const normalized = new TextDecoder().decode(buffer).replace(/\r\n?/g, '\n')
+  return new TextEncoder().encode(normalized).buffer as ArrayBuffer
+}
+
 async function fetchAsset(assetBase: string, name: string, expectedHash: string): Promise<ArrayBuffer> {
   const response = await fetch(assetUrl(assetBase, name))
   if (!response.ok && response.status !== 0) throw new Error(`OCR 资源读取失败：${name}`)
   const buffer = await response.arrayBuffer()
-  if (await hexDigest(buffer) !== expectedHash) throw new Error(`OCR 资源校验失败：${name}`)
+  if (await hexDigest(checksumBuffer(name, buffer)) !== expectedHash) throw new Error(`OCR 资源校验失败：${name}`)
   return buffer
 }
 
@@ -290,7 +297,11 @@ async function recognizeBoxes(
   boxes: TextBox[],
 ): Promise<OcrTextLine[]> {
   const lines: OcrTextLine[] = []
-  for (const box of sortBoxes(boxes).slice(0, 80)) {
+  const sorted = sortBoxes(boxes)
+  const selected = sorted.length <= MAX_RECOGNITION_BOXES
+    ? sorted
+    : [...sorted.slice(0, MAX_RECOGNITION_BOXES / 2), ...sorted.slice(-MAX_RECOGNITION_BOXES / 2)]
+  for (const box of selected) {
     const tensor = recognitionTensor(pixels, width, height, box)
     const result = await runtimeValue.recognition.run({ [runtimeValue.recognition.inputNames[0]]: tensor })
     const decoded = decodeText(result[runtimeValue.recognition.outputNames[0]], runtimeValue.characters)
