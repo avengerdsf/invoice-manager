@@ -895,13 +895,13 @@ export default function App() {
                   })}
                 </div>
               </div>}
+              {settingsPage === 'main' && project && (
+                <button type="button" className="settings-nav-row settings-move-project" disabled={readOnly || busy} onClick={() => void moveCurrentProject()}>
+                  <span><strong>移动项目</strong><small title={session?.rootPath}>{session?.rootPath}</small></span>
+                  <span className="settings-chevron" aria-hidden="true">›</span>
+                </button>
+              )}
             </DialogContent>
-            {settingsPage === 'main' && project && (
-              <button type="button" className="settings-nav-row settings-move-project" disabled={readOnly || busy} onClick={() => void moveCurrentProject()}>
-                <span><strong>移动项目</strong><small title={session?.rootPath}>{session?.rootPath}</small></span>
-                <span className="settings-chevron" aria-hidden="true">›</span>
-              </button>
-            )}
             {settingsPage === 'main' && <DialogActions>
               <Button appearance="secondary" onClick={() => setSettingsDialog(null)}>取消</Button>
               <Button
