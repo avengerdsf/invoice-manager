@@ -1,5 +1,6 @@
 ﻿import { mkdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
+import { cpSync, existsSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } from 'electron'
@@ -9,6 +10,25 @@ import { ProjectStorage } from './project-storage'
 import type { AttachmentKind, ExportOptions, Project, ProjectFundsSummary } from '../src/shared/models'
 import { IPC_CHANNELS, ProjectSchema } from '../src/shared/models'
 import { calculateProjectSummary } from '../src/domain/project'
+
+function configureInstalledDataPath(): void {
+  if (!app.isPackaged) return
+  const legacyUserDataPath = app.getPath('userData')
+  const installedDataPath = path.join(path.dirname(process.execPath), 'data')
+  if (path.resolve(legacyUserDataPath).toLowerCase() === path.resolve(installedDataPath).toLowerCase()) return
+
+  mkdirSync(installedDataPath, { recursive: true })
+  if (existsSync(legacyUserDataPath)) {
+    cpSync(legacyUserDataPath, installedDataPath, { recursive: true, force: false, errorOnExist: false })
+    const legacySettingsPath = path.join(legacyUserDataPath, 'settings.json')
+    if (!existsSync(legacySettingsPath) || existsSync(path.join(installedDataPath, 'settings.json'))) {
+      rmSync(legacyUserDataPath, { recursive: true, force: true })
+    }
+  }
+  app.setPath('userData', installedDataPath)
+}
+
+configureInstalledDataPath()
 
 const storage = new ProjectStorage()
 const settingsStorage = new AppSettingsStorage(path.join(app.getPath('userData'), 'settings.json'))
