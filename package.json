@@ -14,7 +14,8 @@
     "ocr:benchmark": "bash scripts/run-ocr-benchmark.sh",
     "ocr:benchmark:tiny": "bash scripts/run-ocr-benchmark.sh --variant tiny",
     "ocr:benchmark:v5-mobile": "bash scripts/run-ocr-benchmark.sh --variant v5-mobile",
-    "dist:win": "npm run build && electron-builder --win nsis"
+    "dist:win": "npm run build && electron-builder --win nsis",
+    "dist:linux": "npm run build && electron-builder --linux AppImage deb"
   },
   "build": {
     "appId": "cn.local.invoice-manager",
@@ -40,6 +41,20 @@
           "arch": [
             "x64"
           ]
+        }
+      ]
+    },
+    "linux": {
+      "icon": "build/app-icon.png",
+      "category": "Office",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64"]
+        },
+        {
+          "target": "deb",
+          "arch": ["x64"]
         }
       ]
     },

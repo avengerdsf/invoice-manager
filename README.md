@@ -1,30 +1,29 @@
 # 发票整理助手
 
-本地桌面端发票、支付截图、报销明细核算和 ZIP 导出工具，使用 Electron、React、TypeScript 和 Fluent UI 开发。
+一款本地运行的发票、支付截图和报销明细管理工具，使用 Electron、React、TypeScript 和 Fluent UI 开发。
 
-## 初版功能
+## 主要功能
 
-- 新建或打开独立的 `.invoice-project` 本地项目。
-- 编辑类别、日期、物品名称、价格、税费、实际付款人、备注和已报销状态，实际付款自动等于价格与税费之和。
-- 全局维护实际付款人名单，按付款人汇总实际付款。
-- 在最近项目候选中直接打开项目，或从本地目录选择项目。
-- 一条明细关联多张发票或支付截图，允许无发票和无支付截图。
-- PDF、JPG、PNG、WebP 文件内容检测和 SHA-256 去重。
-- 添加发票后离线识别金额、税额和价税合计；空白明细自动填写，已有金额时先询问是否覆盖。
-- 1 秒防抖自动保存、20 份 JSON 滚动备份和项目写入锁。
-- 按类别、实际付款、有发票金额、无发票金额和已报销金额汇总。
-- 导出 `报销明细表.xlsx` 和可选附件到 ZIP，完成后可直接打开导出目录。
-- 导出附件使用 `001_物品名称.原扩展名` 命名。
-- Renderer 沙箱、上下文隔离和白名单 IPC。
+- 创建、打开、移动和删除独立的 `.invoice-project` 项目。
+- 管理类别、日期、明细名称、价格、税费、付款人、备注和报销状态。
+- 发票与支付截图支持点击选择、拖拽导入、预览和路径记忆。
+- 发票金额离线识别，项目自动保存并保留滚动备份。
+- 按类别、付款人和报销状态核算当前项目及全部项目资金。
+- 导出 Excel、发票和支付截图到 ZIP 压缩包。
 
-## 开发
+## 开发环境
+
+- Node.js 20 或更高版本
+- npm 10 或更高版本
+
+安装依赖并启动开发模式：
 
 ```bash
 npm install
 npm run dev
 ```
 
-## 验证
+## 检查与测试
 
 ```bash
 npm run typecheck
@@ -34,17 +33,69 @@ npm run build
 
 ## Windows 构建
 
-```bash
+建议在 64 位 Windows 10/11 上构建。首次构建先安装依赖：
+
+```powershell
+npm install
 npm run dist:win
 ```
 
-Ubuntu 构建 Windows NSIS 时需要 Wine 或 `electronuserland/builder:wine` 环境；Windows 正式发布还需要代码签名证书。
+构建结果位于 `release/`：
 
-## 当前边界
+- `发票整理助手 Setup <版本号>.exe`：x64 NSIS 安装包。
+- `win-unpacked/发票整理助手.exe`：解包后的应用程序。
 
-- OCR 当前识别发票金额、税额和价税合计；发票号码、日期、销售方和真伪查验尚未接入界面。
-- 附件当前调用系统默认程序打开，应用内 PDF/图片预览尚未实现。
-- 当前表格支持直接编辑，批量编辑、排序、筛选、撤销和拖拽导入尚未实现。
-- Windows NSIS 安装包尚未在真实 Windows 10/11 机器完成安装、升级和卸载验收。
+Windows 正式发布如需消除 SmartScreen 的未知发布者提示，需要配置代码签名证书。
 
-完整需求见 [需求与依赖分析](doc/requirements-and-dependencies.md)。
+## Ubuntu 构建
+
+建议使用 Ubuntu 22.04 或 24.04 x64。安装 Node.js、npm 及构建依赖：
+
+```bash
+sudo apt update
+sudo apt install -y build-essential libarchive-tools rpm
+npm install
+npm run dist:linux
+```
+
+构建结果位于 `release/`：
+
+- `*.AppImage`：无需安装，添加执行权限后直接运行。
+- `*.deb`：适用于 Ubuntu/Debian 的安装包。
+
+运行 AppImage：
+
+```bash
+chmod +x release/*.AppImage
+./release/*.AppImage
+```
+
+安装 deb：
+
+```bash
+sudo apt install ./release/*.deb
+```
+
+如果 AppImage 提示缺少 FUSE，可安装：
+
+```bash
+sudo apt install libfuse2
+```
+
+Ubuntu 24.04 也可以不安装 FUSE，使用：
+
+```bash
+./release/*.AppImage --appimage-extract-and-run
+```
+
+## 应用数据位置
+
+- Windows 打包版：`<安装目录>/data`，首次运行新版会迁移旧 Roaming 数据。
+- Ubuntu：遵循 Electron/Linux 标准，通常位于 `~/.config/发票整理助手`。
+- 报销项目文件保存在用户创建或选择的 `.invoice-project` 目录中。
+
+## 构建说明
+
+- Windows NSIS 安装包应优先在 Windows 上构建。
+- AppImage 和 deb 应优先在 Ubuntu 上构建。
+- 不建议跨平台直接构建另一平台的安装包；若必须这样做，需要额外配置 Wine 或容器环境。

@@ -74,7 +74,8 @@ button, input, select { font: inherit; }
 .welcome { flex: 1; display: flex; align-items: center; justify-content: center; padding: 32px; }
 .welcome-card { width: 560px; max-height: calc(100vh - 80px); overflow: auto; padding: 48px 44px 40px; text-align: center; background: #ffffff; border: 1px solid var(--c-border); border-radius: var(--r-lg); box-shadow: var(--shadow-xl); animation: welcome-enter .5s var(--ease-spring) both; }
 @keyframes welcome-enter { from { opacity: 0; transform: translateY(20px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
-.welcome-icon { width: 68px; height: 68px; margin: 0 auto 20px; border-radius: var(--r-md); display: grid; place-items: center; background: linear-gradient(145deg, #dbeafe, #eff6ff); border: 1px solid #bfdbfe; color: var(--c-accent); font-size: 28px; box-shadow: 0 4px 12px rgba(37,99,235,.08); }
+.welcome-icon { width: 76px; height: 76px; margin: 0 auto 20px; display: grid; place-items: center; }
+.welcome-icon img { width: 76px; height: 76px; display: block; object-fit: contain; }
 .welcome-card h2 { margin: 8px 0 6px; font-size: 26px; font-weight: 700; color: var(--c-text-0); letter-spacing: -.3px; }
 .welcome-card .subtitle { color: var(--c-text-2); font-size: 14px; line-height: 1.7; margin: 0 0 28px; }
 .welcome-actions { display: flex; justify-content: center; gap: 12px; margin-bottom: 32px; }
@@ -156,7 +157,7 @@ button, input, select { font: inherit; }
 
 /* Row delete */
 .row-action-cell { padding: 6px 8px !important; text-align: center; }
-.row-delete { width: 32px; height: 32px; margin: 0; padding: 0; border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; color: var(--c-text-3); opacity: 0; display: grid; place-items: center; cursor: pointer; transition: all var(--dur-fast) var(--ease-out); }
+.row-delete { width: 32px; height: 32px; margin: 0; padding: 0; border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; color: var(--c-text-3); opacity: .58; display: grid; place-items: center; cursor: pointer; transition: all var(--dur-fast) var(--ease-out); }
 .expense-table tbody tr:hover .row-delete, .row-delete:focus-visible { opacity: .7; }
 .row-delete svg { width: 14px; height: 14px; display: block; overflow: visible; }
 .row-delete path { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
@@ -176,9 +177,14 @@ button, input, select { font: inherit; }
 .expense-table td .fui-Input:focus-within, .expense-table td .custom-select-trigger:focus-visible, .expense-table td .custom-select-trigger[aria-expanded="true"] { border-color: var(--c-accent) !important; background: #ffffff !important; box-shadow: var(--shadow-glow) !important; }
 
 /* Attachments */
-.attachment-entry { width: 100%; min-height: 32px; padding: 4px 8px; border-radius: var(--r-sm); transition: all var(--dur-fast) var(--ease-out); border: none !important; background: transparent !important; }
-.attachment-entry .attachment-entry-content { display: flex; align-items: center; gap: 6px; border: 1px solid var(--c-border-strong); border-radius: var(--r-sm); padding: 4px 8px; background: #ffffff; transition: all var(--dur-fast) ease; }
+.attachment-cell-column { height: 48px; padding: 4px !important; }
+.attachment-entry { width: 100%; height: 100%; min-width: 0 !important; min-height: 0; padding: 0 !important; border-radius: var(--r-sm); transition: all var(--dur-fast) var(--ease-out); border: none !important; background: transparent !important; }
+.attachment-entry > .fui-Button__content { width: 100%; height: 100%; min-width: 0; }
+.attachment-entry .attachment-entry-content { width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--c-border-strong); border-radius: var(--r-sm); padding: 4px; background: #ffffff; white-space: nowrap; transition: all var(--dur-fast) ease; }
+.attachment-entry .attachment-entry-content > span:last-child { flex: 0 0 auto; white-space: nowrap; }
 .attachment-status-icon { width: 20px; height: 20px; flex: 0 0 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; padding: 0; background: var(--c-surface-3); color: var(--c-text-3); font-family: "Microsoft YaHei UI", sans-serif; font-size: 10px; font-weight: 700; line-height: 1; text-align: center; transform: translateY(0); transition: all var(--dur-fast) var(--ease-spring); }
+.attachment-status-icon svg { width: 12px; height: 12px; display: block; overflow: visible; }
+.attachment-status-icon svg path { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
 .attachment-entry.invoice .attachment-status-icon { background: #dbeafe; color: var(--c-accent); }
 .attachment-entry.payment .attachment-status-icon { background: #dcfce7; color: #16a34a; }
 .attachment-entry:not(:disabled):hover { background: transparent !important; }

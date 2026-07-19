@@ -12,7 +12,7 @@ import { IPC_CHANNELS, ProjectSchema } from '../src/shared/models'
 import { calculateProjectSummary } from '../src/domain/project'
 
 function configureInstalledDataPath(): void {
-  if (!app.isPackaged) return
+  if (!app.isPackaged || process.platform !== 'win32') return
   const legacyUserDataPath = app.getPath('userData')
   const installedDataPath = path.join(path.dirname(process.execPath), 'data')
   if (path.resolve(legacyUserDataPath).toLowerCase() === path.resolve(installedDataPath).toLowerCase()) return

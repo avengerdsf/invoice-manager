@@ -14,6 +14,7 @@ import {
   Spinner,
 } from '@fluentui/react-components'
 import CustomSelect from './components/CustomSelect'
+import appIconUrl from '../build/app-icon.png'
 import { calculateProjectSummary, createExpense, expenseTotalCents, formatMoney } from './domain/project'
 import { recognizeInvoiceAmounts } from './ocr/ocr-client'
 import type { InvoiceAmounts } from './ocr/amount'
@@ -531,7 +532,7 @@ export default function App() {
       {!project ? (
         <main className="welcome">
           <div className="welcome-card">
-            <div className="welcome-icon">票</div>
+            <div className="welcome-icon"><img src={appIconUrl} alt="" /></div>
             <h2>建立第一个报销项目</h2>
             <p>项目文件、发票和支付截图全部保存在你选择的本地目录。</p>
             <div className="welcome-actions">
@@ -616,7 +617,7 @@ export default function App() {
                       </div>
                     </th>
                     <th rowSpan={2}>已报销</th><th className="attachment-column attachment-group-heading" colSpan={2}>附件</th>
-                    <th rowSpan={2}>备注</th><th rowSpan={2} className="action-subheading" aria-label="删除明细" />
+                    <th rowSpan={2}>备注</th><th rowSpan={2} className="action-subheading">操作</th>
                   </tr>
                   <tr><th>价格</th><th>税费</th><th>总价</th><th className="attachment-column attachment-subheading">发票</th><th className="attachment-subheading">支付截图</th></tr>
                 </thead>
@@ -1298,7 +1299,7 @@ function AttachmentCell({ count, kind, readOnly, onManage }: { count: number; ki
       onClick={onManage}
     >
       <span className="attachment-entry-content">
-        <span className="attachment-status-icon" aria-hidden="true">{count > 0 ? (kind === 'invoice' ? '票' : '图') : '+'}</span>
+        <span className="attachment-status-icon" aria-hidden="true">{count > 0 ? (kind === 'invoice' ? '票' : '图') : <svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" /></svg>}</span>
         <span>{count > 0 ? `${count} 份` : '添加'}</span>
       </span>
     </Button>
