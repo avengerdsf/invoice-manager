@@ -160,6 +160,15 @@ function registerIpc(): void {
     return session
   })
 
+  ipcMain.handle(IPC_CHANNELS.checkRecentProject, (_event, rawRootPath: unknown) => (
+    typeof rawRootPath === 'string' && existsSync(path.join(rawRootPath, 'project.json'))
+  ))
+
+  ipcMain.handle(IPC_CHANNELS.removeRecentProject, async (_event, rawRootPath: unknown) => {
+    if (typeof rawRootPath !== 'string') throw new Error('最近项目路径无效')
+    return settingsStorage.forgetProject(rawRootPath)
+  })
+
   ipcMain.handle(IPC_CHANNELS.saveProject, async (_event, rawProject: unknown) => {
     const previousRootPath = storage.activeRoot
     const project = await storage.save(ProjectSchema.parse(rawProject))

@@ -7,6 +7,8 @@ const IPC_CHANNELS = {
   createProject: 'project:create',
   openProject: 'project:open',
   openRecentProject: 'project:open-recent',
+  checkRecentProject: 'project:check-recent',
+  removeRecentProject: 'project:remove-recent',
   saveProject: 'project:save',
   importAttachments: 'attachment:import',
   importDroppedAttachments: 'attachment:import-dropped',
@@ -26,6 +28,8 @@ const api: InvoiceManagerApi = {
   createProject: (name: string) => ipcRenderer.invoke(IPC_CHANNELS.createProject, name),
   openProject: () => ipcRenderer.invoke(IPC_CHANNELS.openProject),
   openRecentProject: (rootPath: string) => ipcRenderer.invoke(IPC_CHANNELS.openRecentProject, rootPath),
+  checkRecentProject: (rootPath: string) => ipcRenderer.invoke(IPC_CHANNELS.checkRecentProject, rootPath),
+  removeRecentProject: (rootPath: string) => ipcRenderer.invoke(IPC_CHANNELS.removeRecentProject, rootPath),
   saveProject: (project: Project) => ipcRenderer.invoke(IPC_CHANNELS.saveProject, project),
   importAttachments: (kind: AttachmentKind) => ipcRenderer.invoke(IPC_CHANNELS.importAttachments, kind),
   importDroppedAttachments: (kind: AttachmentKind, files: File[]) => ipcRenderer.invoke(

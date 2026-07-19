@@ -145,7 +145,7 @@ export default function CustomSelect({
         style={{
           width: "100%",
           height,
-          padding: "0 28px 0 12px",
+          padding: "0 8px 0 12px",
           fontSize,
           borderRadius: "8px",
           border: "1px solid #d1d5db",

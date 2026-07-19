@@ -147,6 +147,8 @@ export const IPC_CHANNELS = {
   createProject: 'project:create',
   openProject: 'project:open',
   openRecentProject: 'project:open-recent',
+  checkRecentProject: 'project:check-recent',
+  removeRecentProject: 'project:remove-recent',
   saveProject: 'project:save',
   importAttachments: 'attachment:import',
   importDroppedAttachments: 'attachment:import-dropped',
@@ -166,6 +168,8 @@ export interface InvoiceManagerApi {
   createProject(name: string): Promise<ProjectSession | null>
   openProject(): Promise<ProjectSession | null>
   openRecentProject(rootPath: string): Promise<ProjectSession>
+  checkRecentProject(rootPath: string): Promise<boolean>
+  removeRecentProject(rootPath: string): Promise<AppSettings>
   saveProject(project: Project): Promise<SaveProjectResult>
   importAttachments(kind: AttachmentKind): Promise<Attachment[]>
   importDroppedAttachments(kind: AttachmentKind, files: File[]): Promise<Attachment[]>

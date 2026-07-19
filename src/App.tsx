@@ -67,6 +67,7 @@ export default function App() {
     lastImportDirectories: {},
   })
   const [projectNameDialog, setProjectNameDialog] = useState<string | null>(null)
+  const [missingRecentProject, setMissingRecentProject] = useState<{ name: string; rootPath: string } | null>(null)
   const [settingsDialog, setSettingsDialog] = useState<{
     payerNames: string[]
     newPayerName: string
@@ -388,6 +389,36 @@ export default function App() {
     }
   }
 
+  const openRecentProject = async (recentProject: { name: string; rootPath: string }) => {
+    setBusy(true)
+    try {
+      if (!await window.invoiceManager.checkRecentProject(recentProject.rootPath)) {
+        setMissingRecentProject(recentProject)
+        return
+      }
+    } catch (error) {
+      setMessage(`检查项目失败：${errorMessage(error)}`)
+      return
+    } finally {
+      setBusy(false)
+    }
+    await openSession(() => window.invoiceManager.openRecentProject(recentProject.rootPath))
+  }
+
+  const removeMissingRecentProject = async () => {
+    if (!missingRecentProject) return
+    setBusy(true)
+    try {
+      setAppSettings(await window.invoiceManager.removeRecentProject(missingRecentProject.rootPath))
+      setMissingRecentProject(null)
+      setMessage('已从最近项目中移除')
+    } catch (error) {
+      setMessage(`移除记录失败：${errorMessage(error)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const showAllProjectsSummary = async () => {
     setBusy(true)
     try {
@@ -550,7 +581,7 @@ export default function App() {
                     key={recentProject.rootPath}
                     className="recent-project-button"
                     appearance="subtle"
-                    onClick={() => void openSession(() => window.invoiceManager.openRecentProject(recentProject.rootPath))}
+                    onClick={() => void openRecentProject(recentProject)}
                   >
                     <span className="recent-project-content">
                       <strong>{recentProject.name}</strong>
@@ -571,7 +602,7 @@ export default function App() {
                 <p>{visibleExpenses.length === project.expenses.length ? `${project.expenses.length} 条明细` : `显示 ${visibleExpenses.length} / ${project.expenses.length} 条明细`}</p>
               </div>
               <div className="panel-actions">
-                <Button aria-haspopup="dialog" onClick={() => { setSummaryTab('current'); setSummaryOpen(true) }}>资金核算</Button>
+                <Button className="summary-action-button" aria-haspopup="dialog" onClick={() => { setSummaryTab('current'); setSummaryOpen(true) }}>资金核算</Button>
                 <Button appearance="primary" disabled={readOnly} onClick={addExpense}>添加明细</Button>
               </div>
             </div>
@@ -649,6 +680,26 @@ export default function App() {
 
         </main>
       )}
+      <Dialog
+        open={missingRecentProject !== null}
+        onOpenChange={(_event, data) => {
+          if (!data.open) setMissingRecentProject(null)
+        }}
+      >
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>项目不存在或已移动</DialogTitle>
+            <DialogContent>
+              找不到“{missingRecentProject?.name}”的项目文件。是否从最近项目中删除这条记录？
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setMissingRecentProject(null)}>保留记录</Button>
+              <Button appearance="primary" onClick={() => void removeMissingRecentProject()}>删除记录</Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
       <Dialog open={summaryOpen} onOpenChange={(_event, data) => setSummaryOpen(data.open)}>
         <DialogSurface className="summary-dialog" backdrop={{ className: 'summary-dialog-backdrop', appearance: 'dimmed' }}>
           <DialogBody>

@@ -1,4 +1,4 @@
-import { access, open, readFile, rename, rm, mkdir } from 'node:fs/promises'
+import { copyFile, open, readFile, rename, rm, mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import {
   AppSettingsSchema,
@@ -16,30 +16,14 @@ export class AppSettingsStorage {
 
   async read(): Promise<AppSettings> {
     try {
-      const settings = AppSettingsSchema.parse(JSON.parse(await readFile(this.filePath, 'utf8')))
-      const validPaths = new Set<string>()
-      await Promise.all([...new Set([
-        ...settings.knownProjectPaths,
-        ...settings.recentProjects.map((project) => project.rootPath),
-      ])].map(async (rootPath) => {
-        try {
-          await access(path.join(rootPath, 'project.json'))
-          validPaths.add(rootPath)
-        } catch {
-          // Projects moved or deleted outside the app are removed from history.
-        }
-      }))
-      const recentProjects = settings.recentProjects.filter((project) => validPaths.has(project.rootPath))
-      const knownProjectPaths = settings.knownProjectPaths.filter((rootPath) => validPaths.has(rootPath))
-      if (recentProjects.length !== settings.recentProjects.length || knownProjectPaths.length !== settings.knownProjectPaths.length) {
-        settings.recentProjects = recentProjects
-        settings.knownProjectPaths = knownProjectPaths
-        await this.write(settings)
-      }
-      return settings
+      return AppSettingsSchema.parse(JSON.parse(await readFile(this.filePath, 'utf8')))
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return AppSettingsSchema.parse({})
-      throw error
+      try {
+        return AppSettingsSchema.parse(JSON.parse(await readFile(`${this.filePath}.bak`, 'utf8')))
+      } catch {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return AppSettingsSchema.parse({})
+        throw error
+      }
     }
   }
 
@@ -161,5 +145,6 @@ export class AppSettingsStorage {
       await rm(this.filePath, { force: true })
       await rename(temporaryPath, this.filePath)
     }
+    await copyFile(this.filePath, `${this.filePath}.bak`)
   }
 }
