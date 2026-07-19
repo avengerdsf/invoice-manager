@@ -52,6 +52,9 @@ export default function App() {
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false)
   const [exportDialog, setExportDialog] = useState(false)
   const [attachmentDialog, setAttachmentDialog] = useState<{ expenseId: string; kind: AttachmentKind } | null>(null)
+  const [attachmentDragActive, setAttachmentDragActive] = useState(false)
+  const [categoryFilter, setCategoryFilter] = useState('__all__')
+  const [payerFilter, setPayerFilter] = useState('__all__')
   const [attachmentPreview, setAttachmentPreview] = useState<{ id: string; name: string; mimeType: string; url: string } | null>(null)
   const [removalRequest, setRemovalRequest] = useState<RemovalRequest | null>(null)
   const [ocrOverwriteRequest, setOcrOverwriteRequest] = useState<OcrOverwriteRequest | null>(null)
@@ -80,6 +83,19 @@ export default function App() {
   const project = session?.project ?? null
   const readOnly = session?.readOnly ?? true
   const summary = useMemo(() => (project ? calculateProjectSummary(project) : null), [project])
+  const visibleExpenses = useMemo(() => {
+    if (!project) return []
+    return project.expenses.filter((expense) => (
+      (categoryFilter === '__all__' || expense.categoryId === categoryFilter)
+      && (payerFilter === '__all__'
+        || (payerFilter === '__unset__' ? !expense.actualPayer.trim() : expense.actualPayer === payerFilter))
+    ))
+  }, [project, categoryFilter, payerFilter])
+
+  useEffect(() => {
+    setCategoryFilter('__all__')
+    setPayerFilter('__all__')
+  }, [project?.id])
 
   useEffect(() => {
     void window.invoiceManager.getSettings()
@@ -106,6 +122,7 @@ export default function App() {
     changeVersion.current += 1
     setSession({ ...session, project: next })
     setDirty(true)
+    setAllProjectsSummary(null)
   }
 
   const save = async () => {
@@ -283,11 +300,13 @@ export default function App() {
     ocrOverwriteResolver.current = null
   }
 
-  const attachFiles = async (expenseId: string, kind: AttachmentKind) => {
+  const attachFiles = async (expenseId: string, kind: AttachmentKind, droppedFiles?: File[]) => {
     if (!project || session?.readOnly) return
     setBusy(true)
     try {
-      const imported = await window.invoiceManager.importAttachments(kind)
+      const imported = droppedFiles
+        ? await window.invoiceManager.importDroppedAttachments(kind, droppedFiles)
+        : await window.invoiceManager.importAttachments(kind)
       if (!imported.length) return
       const existingAllocations = kind === 'invoice' ? project.invoiceAllocations : project.paymentAllocations
       const attachmentsToLink = imported.filter((attachment) => !existingAllocations.some(
@@ -367,8 +386,7 @@ export default function App() {
   const showAllProjectsSummary = async () => {
     setBusy(true)
     try {
-      if (dirty) await save()
-      setAllProjectsSummary(await window.invoiceManager.getAllProjectsSummary())
+      setAllProjectsSummary(await window.invoiceManager.getAllProjectsSummary(project ?? undefined))
       setSummaryOpen(true)
     } catch (error) {
       setMessage(`读取全部项目汇总失败：${errorMessage(error)}`)
@@ -388,6 +406,25 @@ export default function App() {
       setMessage('项目已移入回收站')
     } catch (error) {
       setMessage(`删除项目失败：${errorMessage(error)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const moveCurrentProject = async () => {
+    if (!session || session.readOnly) return
+    setBusy(true)
+    try {
+      if (dirty) await save()
+      const result = await window.invoiceManager.moveCurrentProject()
+      if (!result) return
+      setSession(result.session)
+      setAppSettings(result.settings)
+      setDirty(false)
+      setSettingsDialog(null)
+      setMessage(`项目已移动到：${result.session.rootPath}`)
+    } catch (error) {
+      setMessage(`移动项目失败：${errorMessage(error)}`)
     } finally {
       setBusy(false)
     }
@@ -525,7 +562,7 @@ export default function App() {
             <div className="panel-heading">
               <div>
                 <h2>报销明细表</h2>
-                <p>{project.expenses.length} 条明细</p>
+                <p>{visibleExpenses.length === project.expenses.length ? `${project.expenses.length} 条明细` : `显示 ${visibleExpenses.length} / ${project.expenses.length} 条明细`}</p>
               </div>
               <div className="panel-actions">
                 <Button aria-haspopup="dialog" onClick={() => { setSummaryTab('current'); setSummaryOpen(true) }}>资金核算</Button>
@@ -551,15 +588,40 @@ export default function App() {
                 </colgroup>
                 <thead>
                   <tr>
-                    <th rowSpan={2}>类别</th><th rowSpan={2}>日期</th><th rowSpan={2}>详细名称</th>
-                    <th colSpan={3}>金额</th><th rowSpan={2}>实际付款</th><th rowSpan={2}>实际付款人</th>
+                    <th rowSpan={2}>
+                      <div className="table-header-filter">
+                        <span>类别</span>
+                        <CustomSelect
+                          size="small"
+                          value={categoryFilter}
+                          onChange={setCategoryFilter}
+                          options={[{ value: '__all__', label: '全部类别' }, ...project.categories.map((category) => ({ value: category.id, label: category.name }))]}
+                        />
+                      </div>
+                    </th><th rowSpan={2}>日期</th><th rowSpan={2}>详细名称</th>
+                    <th colSpan={3}>金额</th><th rowSpan={2}>实际付款</th><th rowSpan={2}>
+                      <div className="table-header-filter">
+                        <span>实际付款人</span>
+                        <CustomSelect
+                          size="small"
+                          value={payerFilter}
+                          onChange={setPayerFilter}
+                          options={[
+                            { value: '__all__', label: '全部付款人' },
+                            { value: '__unset__', label: '未设置付款人' },
+                            ...[...new Set([...appSettings.payerNames, ...project.expenses.map((expense) => expense.actualPayer).filter(Boolean)])]
+                              .map((payerName) => ({ value: payerName, label: payerName })),
+                          ]}
+                        />
+                      </div>
+                    </th>
                     <th rowSpan={2}>已报销</th><th className="attachment-column attachment-group-heading" colSpan={2}>附件</th>
                     <th rowSpan={2}>备注</th><th rowSpan={2} className="action-subheading" aria-label="删除明细" />
                   </tr>
                   <tr><th>价格</th><th>税费</th><th>总价</th><th className="attachment-column attachment-subheading">发票</th><th className="attachment-subheading">支付截图</th></tr>
                 </thead>
                 <tbody>
-                  {project.expenses.map((expense) => (
+                  {visibleExpenses.map((expense) => (
                     <ExpenseRow
                       key={expense.id}
                       expense={expense}
@@ -568,12 +630,11 @@ export default function App() {
                       readOnly={readOnly}
                       onUpdate={updateExpense}
                       onRemove={(expenseId) => setRemovalRequest({ kind: 'expense', expenseId })}
-                      onAttach={attachFiles}
                       onManage={(kind) => setAttachmentDialog({ expenseId: expense.id, kind })}
                     />
                   ))}
-                  {!project.expenses.length && (
-                    <tr><td colSpan={13} className="empty-row">点击“添加明细”开始录入</td></tr>
+                  {!visibleExpenses.length && (
+                    <tr><td colSpan={13} className="empty-row">{project.expenses.length ? '没有符合筛选条件的明细' : '点击“添加明细”开始录入'}</td></tr>
                   )}
                 </tbody>
               </table>
@@ -589,7 +650,7 @@ export default function App() {
             <DialogContent className="summary-dialog-content">
               <div className="summary-tabs" role="tablist">
                 <button type="button" role="tab" aria-selected={summaryTab === 'current'} onClick={() => setSummaryTab('current')}>当前项目</button>
-                <button type="button" role="tab" aria-selected={summaryTab === 'all'} onClick={() => { setSummaryTab('all'); if (!allProjectsSummary) void showAllProjectsSummary() }}>全部项目</button>
+                <button type="button" role="tab" aria-selected={summaryTab === 'all'} onClick={() => { setSummaryTab('all'); void showAllProjectsSummary() }}>全部项目</button>
               </div>
               {summaryTab === 'current' && summary && (
                 <>
@@ -778,6 +839,12 @@ export default function App() {
                 </div>
               </div>}
             </DialogContent>
+            {settingsPage === 'main' && project && (
+              <button type="button" className="settings-nav-row settings-move-project" disabled={readOnly || busy} onClick={() => void moveCurrentProject()}>
+                <span><strong>移动项目</strong><small title={session?.rootPath}>{session?.rootPath}</small></span>
+                <span className="settings-chevron" aria-hidden="true">›</span>
+              </button>
+            )}
             {settingsPage === 'main' && <DialogActions>
               <Button appearance="secondary" onClick={() => setSettingsDialog(null)}>取消</Button>
               <Button
@@ -814,11 +881,48 @@ export default function App() {
           </DialogBody>
         </DialogSurface>
       </Dialog>
-      <Dialog open={attachmentDialog !== null} onOpenChange={(_event, data) => !data.open && setAttachmentDialog(null)}>
+      <Dialog open={attachmentDialog !== null} onOpenChange={(_event, data) => {
+        if (!data.open) {
+          setAttachmentDialog(null)
+          setAttachmentDragActive(false)
+        }
+      }}>
         <DialogSurface>
           <DialogBody>
             <DialogTitle>{attachmentDialog?.kind === 'invoice' ? '发票管理' : '支付截图管理'}</DialogTitle>
             <DialogContent>
+              {attachmentDialog && (
+                <div
+                  className={`attachment-drop-zone${attachmentDragActive ? ' drag-active' : ''}`}
+                  role="button"
+                  tabIndex={readOnly ? -1 : 0}
+                  aria-disabled={readOnly}
+                  aria-label={attachmentDialog.kind === 'invoice' ? '点击选择或拖入发票' : '点击选择或拖入支付截图'}
+                  onClick={() => {
+                    if (!readOnly) void attachFiles(attachmentDialog.expenseId, attachmentDialog.kind)
+                  }}
+                  onKeyDown={(event) => {
+                    if (!readOnly && (event.key === 'Enter' || event.key === ' ')) {
+                      event.preventDefault()
+                      void attachFiles(attachmentDialog.expenseId, attachmentDialog.kind)
+                    }
+                  }}
+                  onDragEnter={(event) => { event.preventDefault(); setAttachmentDragActive(true) }}
+                  onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' }}
+                  onDragLeave={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setAttachmentDragActive(false)
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault()
+                    setAttachmentDragActive(false)
+                    const files = Array.from(event.dataTransfer.files)
+                    if (files.length) void attachFiles(attachmentDialog.expenseId, attachmentDialog.kind, files)
+                  }}
+                >
+                  <strong>{attachmentDialog.kind === 'invoice' ? '点击选择，或把发票拖到这里' : '点击选择，或把支付截图拖到这里'}</strong>
+                  <span>支持 PDF、JPG、PNG 和 WebP，可一次选择或拖入多份</span>
+                </div>
+              )}
               <div className="settings-list">
                 {attachmentDialog && project && (() => {
                   const allocations = attachmentDialog.kind === 'invoice' ? project.invoiceAllocations : project.paymentAllocations
@@ -858,6 +962,7 @@ export default function App() {
             </DialogContent>
             <DialogActions>
               <Button
+                className="attachment-add-button-hidden"
                 disabled={readOnly || !attachmentDialog}
                 onClick={() => attachmentDialog && void attachFiles(attachmentDialog.expenseId, attachmentDialog.kind)}
               >
@@ -1027,6 +1132,106 @@ function mergeAttachments(project: Project, attachments: Attachment[]): void {
   }
 }
 
+interface MoneyInputProps {
+  disabled: boolean
+  valueCents: number
+  onChange(valueCents: number): void
+}
+
+function MoneyInput({ disabled, valueCents, onChange }: MoneyInputProps) {
+  const [editingValue, setEditingValue] = useState(() => formatMoney(valueCents))
+  const editing = useRef(false)
+
+  useEffect(() => {
+    if (!editing.current) setEditingValue(formatMoney(valueCents))
+  }, [valueCents])
+
+  const commit = () => {
+    editing.current = false
+    const cents = toCents(editingValue)
+    onChange(cents)
+    setEditingValue(formatMoney(cents))
+  }
+
+  return (
+    <Input
+      disabled={disabled}
+      inputMode="decimal"
+      value={editingValue}
+      onFocus={() => { editing.current = true }}
+      onChange={(_event, data) => {
+        if (!/^\d*(?:\.\d{0,2})?$/.test(data.value)) return
+        setEditingValue(data.value)
+        onChange(toCents(data.value))
+      }}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') event.currentTarget.blur()
+      }}
+    />
+  )
+}
+
+function formatDateForInput(value: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value.replaceAll('-', '/') : value
+}
+
+function normalizeDateInput(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  let year: number
+  let month: number
+  let day: number
+  const digits = trimmed.replace(/\D/g, '')
+  if (digits.length === 8) {
+    year = Number(digits.slice(0, 4))
+    month = Number(digits.slice(4, 6))
+    day = Number(digits.slice(6, 8))
+  } else {
+    const match = trimmed.match(/^(\d{4})[\/.\-](\d{1,2})[\/.\-](\d{1,2})$/)
+    if (!match) return null
+    year = Number(match[1])
+    month = Number(match[2])
+    day = Number(match[3])
+  }
+  const candidate = new Date(year, month - 1, day)
+  if (candidate.getFullYear() !== year || candidate.getMonth() !== month - 1 || candidate.getDate() !== day) return null
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
+function DateInput({ disabled, value, onChange }: { disabled: boolean; value: string; onChange(value: string): void }) {
+  const [editingValue, setEditingValue] = useState(() => formatDateForInput(value))
+  const editing = useRef(false)
+
+  useEffect(() => {
+    if (!editing.current) setEditingValue(formatDateForInput(value))
+  }, [value])
+
+  const commit = () => {
+    editing.current = false
+    const normalized = normalizeDateInput(editingValue)
+    if (normalized === null) {
+      setEditingValue(formatDateForInput(value))
+      return
+    }
+    onChange(normalized)
+    setEditingValue(formatDateForInput(normalized))
+  }
+
+  return <Input
+    className="date-input"
+    disabled={disabled}
+    inputMode="numeric"
+    maxLength={10}
+    placeholder="YYYY/MM/DD"
+    value={editingValue}
+    onFocus={() => { editing.current = true }}
+    onChange={(_event, data) => setEditingValue(data.value)}
+    onBlur={commit}
+    onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }}
+  />
+}
+
 interface ExpenseRowProps {
   expense: ExpenseItem
   project: Project
@@ -1034,20 +1239,19 @@ interface ExpenseRowProps {
   readOnly: boolean
   onUpdate(expenseId: string, field: keyof ExpenseItem, value: string | number | boolean): void
   onRemove(expenseId: string): void
-  onAttach(expenseId: string, kind: AttachmentKind): Promise<void>
   onManage(kind: AttachmentKind): void
 }
 
-function ExpenseRow({ expense, project, payerNames, readOnly, onUpdate, onRemove, onAttach, onManage }: ExpenseRowProps) {
+function ExpenseRow({ expense, project, payerNames, readOnly, onUpdate, onRemove, onManage }: ExpenseRowProps) {
   const invoiceCount = allocationCount(project.invoiceAllocations, expense.id)
   const paymentCount = allocationCount(project.paymentAllocations, expense.id)
   return (
     <tr>
       <td><CustomSelect size="small" disabled={readOnly} value={expense.categoryId} onChange={(value) => onUpdate(expense.id, 'categoryId', value)} options={project.categories.map((category) => ({ value: category.id, label: category.name }))} /></td>
-      <td><Input disabled={readOnly} type="date" value={expense.date} onChange={(_event, data) => onUpdate(expense.id, 'date', data.value)} /></td>
+      <td><DateInput disabled={readOnly} value={expense.date} onChange={(value) => onUpdate(expense.id, 'date', value)} /></td>
       <td><Input disabled={readOnly} value={expense.name} placeholder="物品名称" onChange={(_event, data) => onUpdate(expense.id, 'name', data.value)} /></td>
-      <td><Input disabled={readOnly} type="number" min={0} step="0.01" value={String(expense.priceCents / 100)} onChange={(_event, data) => onUpdate(expense.id, 'priceCents', toCents(data.value))} /></td>
-      <td><Input disabled={readOnly} type="number" min={0} step="0.01" value={String(expense.taxCents / 100)} onChange={(_event, data) => onUpdate(expense.id, 'taxCents', toCents(data.value))} /></td>
+      <td><MoneyInput disabled={readOnly} valueCents={expense.priceCents} onChange={(value) => onUpdate(expense.id, 'priceCents', value)} /></td>
+      <td><MoneyInput disabled={readOnly} valueCents={expense.taxCents} onChange={(value) => onUpdate(expense.id, 'taxCents', value)} /></td>
       <td className="money-cell">{formatMoney(expenseTotalCents(expense))}</td>
       <td className="money-cell">{formatMoney(expenseTotalCents(expense))}</td>
       <td>
@@ -1066,8 +1270,8 @@ function ExpenseRow({ expense, project, payerNames, readOnly, onUpdate, onRemove
         />
       </td>
       <td className="checkbox-cell"><Checkbox disabled={readOnly} checked={expense.reimbursed} onChange={(_event, data) => onUpdate(expense.id, 'reimbursed', Boolean(data.checked))} /></td>
-      <td className="attachment-column attachment-cell-column"><AttachmentCell count={invoiceCount} kind="invoice" readOnly={readOnly} onAttach={() => onAttach(expense.id, 'invoice')} onManage={() => onManage('invoice')} /></td>
-      <td className="attachment-cell-column"><AttachmentCell count={paymentCount} kind="payment" readOnly={readOnly} onAttach={() => onAttach(expense.id, 'payment')} onManage={() => onManage('payment')} /></td>
+      <td className="attachment-column attachment-cell-column"><AttachmentCell count={invoiceCount} kind="invoice" readOnly={readOnly} onManage={() => onManage('invoice')} /></td>
+      <td className="attachment-cell-column"><AttachmentCell count={paymentCount} kind="payment" readOnly={readOnly} onManage={() => onManage('payment')} /></td>
       <td><Input disabled={readOnly} value={expense.note} onChange={(_event, data) => onUpdate(expense.id, 'note', data.value)} /></td>
       <td className="row-action-cell">
         <button className="row-delete" type="button" aria-label="删除明细" title="删除明细" disabled={readOnly} onClick={() => onRemove(expense.id)}>
@@ -1084,14 +1288,14 @@ function allocationCount(allocations: Allocation[], expenseId: string): number {
   return allocations.filter((item) => item.expenseId === expenseId).length
 }
 
-function AttachmentCell({ count, kind, readOnly, onAttach, onManage }: { count: number; kind: AttachmentKind; readOnly: boolean; onAttach(): void; onManage(): void }) {
+function AttachmentCell({ count, kind, readOnly, onManage }: { count: number; kind: AttachmentKind; readOnly: boolean; onManage(): void }) {
   return (
     <Button
       className={`attachment-entry ${kind}`}
       appearance="subtle"
       disabled={readOnly && count === 0}
       title={count > 0 ? `${readOnly ? '查看' : '管理'}${kind === 'invoice' ? '发票' : '支付截图'}` : `添加${kind === 'invoice' ? '发票' : '支付截图'}`}
-      onClick={count > 0 ? onManage : onAttach}
+      onClick={onManage}
     >
       <span className="attachment-entry-content">
         <span className="attachment-status-icon" aria-hidden="true">{count > 0 ? (kind === 'invoice' ? '票' : '图') : '+'}</span>

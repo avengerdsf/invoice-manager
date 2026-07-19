@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, existsSync, realpathSync } from 'node:fs'
-import { copyFile, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, cp, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import path from 'node:path'
 import type { Attachment, AttachmentKind, Project, ProjectSession } from '../src/shared/models'
@@ -196,6 +196,40 @@ export class ProjectStorage {
     this.project = null
     this.readOnly = false
     this.ownsLock = false
+  }
+
+  async moveTo(parentDirectory: string): Promise<ProjectSession> {
+    if (!this.rootPath || !this.project) throw new Error('没有活动项目')
+    if (this.readOnly) throw new Error('只读项目不能移动')
+    const sourcePath = this.rootPath
+    const targetPath = path.join(parentDirectory, path.basename(sourcePath))
+    if (path.resolve(sourcePath).toLowerCase() === path.resolve(targetPath).toLowerCase()) {
+      throw new Error('项目已经位于所选目录中')
+    }
+    if (existsSync(targetPath)) throw new Error(`目标位置已存在同名项目：${targetPath}`)
+
+    await this.close()
+    try {
+      try {
+        await rename(sourcePath, targetPath)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error
+        try {
+          await cp(sourcePath, targetPath, { recursive: true, errorOnExist: true, force: false })
+        } catch (copyError) {
+          await rm(targetPath, { recursive: true, force: true })
+          throw copyError
+        }
+        await rm(sourcePath, { recursive: true })
+      }
+      return await this.open(targetPath)
+    } catch (error) {
+      if (existsSync(sourcePath)) {
+        if (existsSync(targetPath)) await rm(targetPath, { recursive: true, force: true })
+        await this.open(sourcePath)
+      }
+      throw error
+    }
   }
 
   private session(): ProjectSession {

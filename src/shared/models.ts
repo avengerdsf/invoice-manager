@@ -83,6 +83,8 @@ export const AppSettingsSchema = z.object({
     invoice: z.string().min(1).optional(),
     payment: z.string().min(1).optional(),
   }).default({}),
+  lastProjectParentDirectory: z.string().min(1).optional(),
+  lastExportDirectory: z.string().min(1).optional(),
 })
 export type AppSettings = z.infer<typeof AppSettingsSchema>
 
@@ -141,6 +143,7 @@ export const IPC_CHANNELS = {
   openRecentProject: 'project:open-recent',
   saveProject: 'project:save',
   importAttachments: 'attachment:import',
+  importDroppedAttachments: 'attachment:import-dropped',
   readAttachmentForOcr: 'attachment:read-for-ocr',
   readAttachmentPreview: 'attachment:read-preview',
   openAttachment: 'attachment:open',
@@ -148,6 +151,7 @@ export const IPC_CHANNELS = {
   exportProject: 'project:export',
   deleteCurrentProject: 'project:delete-current',
   getAllProjectsSummary: 'project:summary-all',
+  moveCurrentProject: 'project:move-current',
 } as const
 
 export interface InvoiceManagerApi {
@@ -158,11 +162,13 @@ export interface InvoiceManagerApi {
   openRecentProject(rootPath: string): Promise<ProjectSession>
   saveProject(project: Project): Promise<Project>
   importAttachments(kind: AttachmentKind): Promise<Attachment[]>
+  importDroppedAttachments(kind: AttachmentKind, files: File[]): Promise<Attachment[]>
   readAttachmentForOcr(attachmentId: string): Promise<OcrAttachmentSource>
   readAttachmentPreview(attachmentId: string): Promise<AttachmentPreviewSource>
   openAttachment(attachmentId: string): Promise<void>
   revealProject(): Promise<void>
   exportProject(project: Project, options: ExportOptions): Promise<ExportResult | null>
   deleteCurrentProject(): Promise<AppSettings>
-  getAllProjectsSummary(): Promise<AllProjectsFundsSummary>
+  getAllProjectsSummary(currentProject?: Project): Promise<AllProjectsFundsSummary>
+  moveCurrentProject(): Promise<{ session: ProjectSession; settings: AppSettings } | null>
 }

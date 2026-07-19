@@ -44,7 +44,9 @@ function applyHeaderStyle(cell: ExcelJS.Cell, fill: string): void {
 async function buildWorkbook(project: Project): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook()
   workbook.creator = '发票整理助手'
-  const sheet = workbook.addWorksheet('报销明细表', { views: [{ state: 'frozen', ySplit: 2 }] })
+  const sheet = workbook.addWorksheet('报销明细表', {
+    views: [{ state: 'frozen', ySplit: 2, topLeftCell: 'A3', activeCell: 'A3' }],
+  })
   sheet.mergeCells('A1:J1')
   sheet.getCell('A1').value = '报销明细表'
   sheet.getCell('A1').font = { size: 16, bold: true }
@@ -167,7 +169,8 @@ export async function exportProject(
     attachments.forEach((attachment, index) => {
       const expense = expenseMap.get(attachmentExpense.get(attachment.id) ?? '')
       const sequence = String(index + 1).padStart(3, '0')
-      const exportedName = `${kind === 'invoice' ? '发票' : '支付截图'}/${sequence}_${safeName(expense?.name ?? '')}${attachmentExtension(attachment)}`
+      const payerName = safeName(expense?.actualPayer.trim() || '未设置付款人')
+      const exportedName = `${kind === 'invoice' ? '发票' : '支付截图'}/${sequence}_${safeName(expense?.name ?? '')}_${payerName}${attachmentExtension(attachment)}`
       archive.file(resolveAttachment(rootPath, attachment.storedPath), { name: exportedName })
     })
   }

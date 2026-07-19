@@ -85,12 +85,15 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.createProject, async (_event, rawName: unknown) => {
-    if (typeof rawName !== 'string') throw new Error('????????')
+    if (typeof rawName !== 'string') throw new Error('项目名称无效')
+    const settings = await settingsStorage.read()
     const selection = await dialog.showOpenDialog(mainWindow!, {
-      title: '????????',
+      title: '选择项目保存位置',
+      defaultPath: settings.lastProjectParentDirectory,
       properties: ['openDirectory', 'createDirectory'],
     })
     if (selection.canceled || !selection.filePaths[0]) return null
+    await settingsStorage.rememberProjectParentDirectory(selection.filePaths[0])
     const session = await storage.create(selection.filePaths[0], rawName, app.getVersion())
     await settingsStorage.rememberProject(session)
     return session
@@ -98,7 +101,7 @@ function registerIpc(): void {
 
   ipcMain.handle(IPC_CHANNELS.openProject, async () => {
     const selection = await dialog.showOpenDialog(mainWindow!, {
-      title: '??????',
+      title: '打开本地项目',
       properties: ['openDirectory'],
     })
     if (selection.canceled || !selection.filePaths[0]) return null
@@ -109,7 +112,7 @@ function registerIpc(): void {
 
   ipcMain.handle(IPC_CHANNELS.openRecentProject, async (_event, rawRootPath: unknown) => {
     if (typeof rawRootPath !== 'string' || !(await settingsStorage.isRecentProject(rawRootPath))) {
-      throw new Error('???????')
+      throw new Error('最近项目路径无效')
     }
     const session = await storage.open(rawRootPath)
     await settingsStorage.rememberProject(session)
@@ -125,22 +128,36 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.importAttachments, async (_event, rawKind: unknown) => {
-    if (rawKind !== 'invoice' && rawKind !== 'payment') throw new Error('??????')
+    if (rawKind !== 'invoice' && rawKind !== 'payment') throw new Error('附件类型无效')
     const kind = rawKind as AttachmentKind
     const selection = await dialog.showOpenDialog(mainWindow!, {
-      title: kind === 'invoice' ? '????' : '??????',
+      title: kind === 'invoice' ? '选择发票' : '选择支付截图',
+      defaultPath: (await settingsStorage.read()).lastImportDirectories[kind],
       properties: ['openFile', 'multiSelections'],
-      filters: [{ name: '?????', extensions: ['pdf', 'jpg', 'jpeg', 'png', 'webp'] }],
+      filters: [{ name: '支持的附件', extensions: ['pdf', 'jpg', 'jpeg', 'png', 'webp'] }],
     })
     if (selection.canceled) return []
+    if (selection.filePaths[0]) await settingsStorage.rememberImportDirectory(kind, path.dirname(selection.filePaths[0]))
     return storage.importFiles(kind, selection.filePaths)
   })
 
+  ipcMain.handle(IPC_CHANNELS.importDroppedAttachments, async (_event, rawKind: unknown, rawPaths: unknown) => {
+    if (rawKind !== 'invoice' && rawKind !== 'payment') throw new Error('附件类型无效')
+    if (!Array.isArray(rawPaths) || !rawPaths.every((filePath) => typeof filePath === 'string' && path.isAbsolute(filePath))) {
+      throw new Error('拖入的文件路径无效')
+    }
+    const kind = rawKind as AttachmentKind
+    const sourcePaths = [...new Set(rawPaths as string[])]
+    if (!sourcePaths.length) return []
+    await settingsStorage.rememberImportDirectory(kind, path.dirname(sourcePaths[0]))
+    return storage.importFiles(kind, sourcePaths)
+  })
+
   ipcMain.handle(IPC_CHANNELS.readAttachmentForOcr, async (_event, attachmentId: unknown) => {
-    if (typeof attachmentId !== 'string') throw new Error('??????')
+    if (typeof attachmentId !== 'string') throw new Error('附件标识无效')
     const attachment = storage.activeProject?.attachments.find((item) => item.id === attachmentId)
-    if (!attachment || attachment.kind !== 'invoice') throw new Error('OCR ??????????')
-    if (attachment.size > 50 * 1024 * 1024) throw new Error('?????? 50 MB?????')
+    if (!attachment || attachment.kind !== 'invoice') throw new Error('OCR 仅支持发票附件')
+    if (attachment.size > 50 * 1024 * 1024) throw new Error('附件超过 50 MB，无法识别')
     const file = await readFile(storage.getAttachmentPath(attachmentId))
     const data = Uint8Array.from(file).buffer
     return { mimeType: attachment.mimeType, data }
@@ -154,13 +171,31 @@ function registerIpc(): void {
     return settingsStorage.forgetProject(rootPath)
   })
 
-  ipcMain.handle(IPC_CHANNELS.getAllProjectsSummary, async () => {
+  ipcMain.handle(IPC_CHANNELS.moveCurrentProject, async () => {
+    const oldRootPath = storage.activeRoot
+    if (!oldRootPath) throw new Error('没有活动项目')
+    const selection = await dialog.showOpenDialog(mainWindow!, {
+      title: '选择项目的新位置',
+      buttonLabel: '移动到这里',
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    if (selection.canceled || !selection.filePaths[0]) return null
+    const session = await storage.moveTo(selection.filePaths[0])
+    const settings = await settingsStorage.replaceProjectPath(oldRootPath, session)
+    return { session, settings }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.getAllProjectsSummary, async (_event, rawCurrentProject: unknown) => {
     const settings = await settingsStorage.read()
+    const currentProject = rawCurrentProject === undefined ? null : ProjectSchema.parse(rawCurrentProject)
+    const activeRoot = storage.activeRoot
     const projects: ProjectFundsSummary[] = []
     const payerTotals = new Map<string, { totalCents: number; reimbursedCents: number; unreimbursedCents: number }>()
     for (const rootPath of [...new Set(settings.knownProjectPaths)]) {
       try {
-        const project = ProjectSchema.parse(JSON.parse(await readFile(path.join(rootPath, 'project.json'), 'utf8')))
+        const project = currentProject && activeRoot === rootPath
+          ? currentProject
+          : ProjectSchema.parse(JSON.parse(await readFile(path.join(rootPath, 'project.json'), 'utf8')))
         const summary = calculateProjectSummary(project)
         for (const expense of project.expenses) {
           const payerName = expense.actualPayer.trim() || '未设置付款人'
@@ -208,43 +243,45 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.openAttachment, async (_event, attachmentId: unknown) => {
-    if (typeof attachmentId !== 'string') throw new Error('??????')
+    if (typeof attachmentId !== 'string') throw new Error('附件标识无效')
     const error = await shell.openPath(storage.getAttachmentPath(attachmentId))
     if (error) throw new Error(error)
   })
 
   ipcMain.handle(IPC_CHANNELS.revealProject, async () => {
-    if (!storage.activeRoot) throw new Error('??????')
+    if (!storage.activeRoot) throw new Error('没有活动项目')
     const error = await shell.openPath(storage.activeRoot)
     if (error) throw new Error(error)
   })
 
   ipcMain.handle(IPC_CHANNELS.exportProject, async (_event, rawProject: unknown, rawOptions: unknown) => {
-    if (!storage.activeRoot) throw new Error('?????????')
+    if (!storage.activeRoot) throw new Error('请先打开一个项目')
     const project = await storage.save(ProjectSchema.parse(rawProject))
     const options = rawOptions as ExportOptions
-    if (typeof options?.includePayments !== 'boolean') throw new Error('??????')
-    const exportDirectory = path.join(app.getPath('documents'), '????', 'Exports')
-    mkdirSync(exportDirectory, { recursive: true })
+    if (typeof options?.includePayments !== 'boolean') throw new Error('导出选项无效')
+    const settings = await settingsStorage.read()
+    const suggestedFileName = `${project.name}_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.zip`
     const selection = await dialog.showSaveDialog(mainWindow!, {
-      title: '???????',
-      defaultPath: path.join(exportDirectory, `${project.name}_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.zip`),
-      filters: [{ name: 'ZIP ???', extensions: ['zip'] }],
+      title: '选择导出位置',
+      buttonLabel: '导出',
+      defaultPath: path.join(settings.lastExportDirectory ?? app.getPath('documents'), suggestedFileName),
+      filters: [{ name: 'ZIP 压缩包', extensions: ['zip'] }],
     })
     if (selection.canceled || !selection.filePath) return null
+    await settingsStorage.rememberExportDirectory(path.dirname(selection.filePath))
     await exportProject(project, storage.activeRoot, selection.filePath, path.join(app.getPath('temp'), 'InvoiceManager'), options)
     const confirmation = await dialog.showMessageBox(mainWindow!, {
       type: 'info',
-      title: '????',
-      message: '???????',
+      title: '导出完成',
+      message: '项目压缩包已成功导出',
       detail: selection.filePath,
-      buttons: ['??????', '??'],
+      buttons: ['打开所在文件夹', '关闭'],
       defaultId: 0,
       cancelId: 1,
     })
     if (confirmation.response === 0) {
       const error = await shell.openPath(path.dirname(selection.filePath))
-      if (error) throw new Error(`?????????${error}`)
+      if (error) throw new Error(`无法打开导出目录：${error}`)
     }
     return { filePath: selection.filePath, project }
   })

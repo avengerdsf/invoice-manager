@@ -1,4 +1,4 @@
-import { open, readFile, rename, rm, mkdir } from 'node:fs/promises'
+import { access, open, readFile, rename, rm, mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import {
   AppSettingsSchema,
@@ -16,7 +16,27 @@ export class AppSettingsStorage {
 
   async read(): Promise<AppSettings> {
     try {
-      return AppSettingsSchema.parse(JSON.parse(await readFile(this.filePath, 'utf8')))
+      const settings = AppSettingsSchema.parse(JSON.parse(await readFile(this.filePath, 'utf8')))
+      const validPaths = new Set<string>()
+      await Promise.all([...new Set([
+        ...settings.knownProjectPaths,
+        ...settings.recentProjects.map((project) => project.rootPath),
+      ])].map(async (rootPath) => {
+        try {
+          await access(path.join(rootPath, 'project.json'))
+          validPaths.add(rootPath)
+        } catch {
+          // Projects moved or deleted outside the app are removed from history.
+        }
+      }))
+      const recentProjects = settings.recentProjects.filter((project) => validPaths.has(project.rootPath))
+      const knownProjectPaths = settings.knownProjectPaths.filter((rootPath) => validPaths.has(rootPath))
+      if (recentProjects.length !== settings.recentProjects.length || knownProjectPaths.length !== settings.knownProjectPaths.length) {
+        settings.recentProjects = recentProjects
+        settings.knownProjectPaths = knownProjectPaths
+        await this.write(settings)
+      }
+      return settings
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return AppSettingsSchema.parse({})
       throw error
@@ -63,9 +83,40 @@ export class AppSettingsStorage {
     return settings
   }
 
+  async replaceProjectPath(oldRootPath: string, session: ProjectSession): Promise<AppSettings> {
+    const settings = await this.read()
+    settings.recentProjects = settings.recentProjects.filter((item) => item.rootPath !== oldRootPath && item.rootPath !== session.rootPath)
+    settings.recentProjects.unshift({
+      name: session.project.name,
+      rootPath: session.rootPath,
+      lastOpenedAt: new Date().toISOString(),
+    })
+    settings.recentProjects = settings.recentProjects.slice(0, MAX_RECENT_PROJECTS)
+    settings.knownProjectPaths = [
+      session.rootPath,
+      ...settings.knownProjectPaths.filter((item) => item !== oldRootPath && item !== session.rootPath),
+    ]
+    await this.write(settings)
+    return settings
+  }
+
   async rememberImportDirectory(kind: AttachmentKind, directoryPath: string): Promise<AppSettings> {
     const settings = await this.read()
     settings.lastImportDirectories[kind] = directoryPath
+    await this.write(settings)
+    return settings
+  }
+
+  async rememberProjectParentDirectory(directoryPath: string): Promise<AppSettings> {
+    const settings = await this.read()
+    settings.lastProjectParentDirectory = directoryPath
+    await this.write(settings)
+    return settings
+  }
+
+  async rememberExportDirectory(directoryPath: string): Promise<AppSettings> {
+    const settings = await this.read()
+    settings.lastExportDirectory = directoryPath
     await this.write(settings)
     return settings
   }
