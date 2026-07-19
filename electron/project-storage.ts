@@ -133,7 +133,28 @@ export class ProjectStorage {
       revision: Math.max(project.revision, this.project.revision) + 1,
       updatedAt: new Date().toISOString(),
     })
-    await this.writeProjectFile(snapshot, true)
+    const previousRootPath = this.rootPath
+    const shouldRenameDirectory = snapshot.name !== this.project.name
+    const targetRootPath = shouldRenameDirectory
+      ? path.join(path.dirname(previousRootPath), `${sanitizeProjectName(snapshot.name)}.invoice-project`)
+      : previousRootPath
+    const changesDirectory = path.resolve(targetRootPath).toLowerCase() !== path.resolve(previousRootPath).toLowerCase()
+    if (changesDirectory && existsSync(targetRootPath)) {
+      throw new Error(`目标位置已存在同名项目：${targetRootPath}`)
+    }
+    if (changesDirectory) {
+      await rename(previousRootPath, targetRootPath)
+      this.rootPath = targetRootPath
+    }
+    try {
+      await this.writeProjectFile(snapshot, true)
+    } catch (error) {
+      if (changesDirectory && existsSync(targetRootPath) && !existsSync(previousRootPath)) {
+        await rename(targetRootPath, previousRootPath)
+        this.rootPath = previousRootPath
+      }
+      throw error
+    }
     this.project = snapshot
     return snapshot
   }

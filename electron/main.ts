@@ -147,11 +147,17 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.saveProject, async (_event, rawProject: unknown) => {
+    const previousRootPath = storage.activeRoot
     const project = await storage.save(ProjectSchema.parse(rawProject))
     if (storage.activeRoot) {
-      await settingsStorage.rememberProject({ project, rootPath: storage.activeRoot, readOnly: false })
+      const session = { project, rootPath: storage.activeRoot, readOnly: false }
+      if (previousRootPath && previousRootPath !== storage.activeRoot) {
+        await settingsStorage.replaceProjectPath(previousRootPath, session)
+      } else {
+        await settingsStorage.rememberProject(session)
+      }
     }
-    return project
+    return { project, rootPath: storage.activeRoot! }
   })
 
   ipcMain.handle(IPC_CHANNELS.importAttachments, async (_event, rawKind: unknown) => {

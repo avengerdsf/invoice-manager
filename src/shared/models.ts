@@ -108,6 +108,11 @@ export interface OcrAttachmentSource {
   data: ArrayBuffer
 }
 
+export interface SaveProjectResult {
+  project: Project
+  rootPath: string
+}
+
 export interface ProjectFundsSummary {
   name: string
   rootPath: string
@@ -161,7 +166,7 @@ export interface InvoiceManagerApi {
   createProject(name: string): Promise<ProjectSession | null>
   openProject(): Promise<ProjectSession | null>
   openRecentProject(rootPath: string): Promise<ProjectSession>
-  saveProject(project: Project): Promise<Project>
+  saveProject(project: Project): Promise<SaveProjectResult>
   importAttachments(kind: AttachmentKind): Promise<Attachment[]>
   importDroppedAttachments(kind: AttachmentKind, files: File[]): Promise<Attachment[]>
   readAttachmentForOcr(attachmentId: string): Promise<OcrAttachmentSource>

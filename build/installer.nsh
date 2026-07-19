@@ -2,10 +2,39 @@
 !include "LogicLib.nsh"
 !include "FileFunc.nsh"
 !include "WinMessages.nsh"
+!include "nsProcess.nsh"
+
+!macro customCheckAppRunning
+  checkInvoiceManagerRunning:
+    ${nsProcess::FindProcess} "${APP_EXECUTABLE_FILENAME}" $R0
+    ${If} $R0 == 0
+      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "发票整理助手正在运行。请先关闭应用，然后单击“重试”继续安装。" /SD IDCANCEL IDRETRY checkInvoiceManagerRunning
+      ${nsProcess::Unload}
+      Quit
+    ${EndIf}
+  ${nsProcess::Unload}
+!macroend
 
 !ifndef BUILD_UNINSTALLER
   Var customInstallDirectoryInput
   Var customInstallBrowseButton
+
+  ; Preserve application data while electron-builder removes the previous
+  ; installation during an in-place update. The sibling directory is outside
+  ; $INSTDIR, so the old uninstaller cannot remove it.
+  !macro customInit
+    IfFileExists "$INSTDIR\data\settings.json" 0 preserveDataDone
+    RMDir /r "$INSTDIR.__update-data"
+    Rename "$INSTDIR\data" "$INSTDIR.__update-data"
+    preserveDataDone:
+  !macroend
+
+  !macro customInstall
+    IfFileExists "$INSTDIR.__update-data\settings.json" 0 restoreDataDone
+    RMDir /r "$INSTDIR\data"
+    Rename "$INSTDIR.__update-data" "$INSTDIR\data"
+    restoreDataDone:
+  !macroend
 
   !macro customPageAfterChangeDir
     Page custom createInstallDirectoryPage leaveInstallDirectoryPage

@@ -132,11 +132,15 @@ export default function App() {
     const snapshot = session.project
     saving.current = true
     try {
-      const saved = await window.invoiceManager.saveProject(snapshot)
+      const result = await window.invoiceManager.saveProject(snapshot)
+      const saved = result.project
+      if (result.rootPath !== session.rootPath) {
+        setAppSettings(await window.invoiceManager.getSettings())
+      }
       setSession((current) => {
         if (!current || current.project.id !== saved.id) return current
-        if (changeVersion.current === version) return { ...current, project: saved }
-        return { ...current, project: { ...current.project, revision: saved.revision, updatedAt: saved.updatedAt } }
+        if (changeVersion.current === version) return { ...current, rootPath: result.rootPath, project: saved }
+        return { ...current, rootPath: result.rootPath, project: { ...current.project, revision: saved.revision, updatedAt: saved.updatedAt } }
       })
       if (changeVersion.current === version) setDirty(false)
     } catch (error) {
@@ -526,34 +530,35 @@ export default function App() {
         </header>
       )}
 
-      {!project && <Button className="welcome-settings" appearance="subtle" onClick={requestOpenSettings}>设置</Button>}
       {(busy || message) && <div className={`app-message ${project ? 'below-topbar' : ''}`}>{busy && <Spinner size="tiny" />} {message}</div>}
 
       {!project ? (
         <main className="welcome">
           <div className="welcome-card">
             <div className="welcome-icon"><img src={appIconUrl} alt="" /></div>
-            <h2>建立第一个报销项目</h2>
-            <p>项目文件、发票和支付截图全部保存在你选择的本地目录。</p>
+            <h2>开始</h2>
+            <p>建立或打开一个报销项目</p>
             <div className="welcome-actions">
               <Button appearance="primary" size="large" onClick={requestCreateProject}>新建项目</Button>
               <Button size="large" onClick={() => void openSession(() => window.invoiceManager.openProject())}>从本地打开…</Button>
             </div>
             <div className="recent-projects">
               <h3>最近项目</h3>
-              {appSettings.recentProjects.length ? appSettings.recentProjects.map((recentProject) => (
-                <Button
-                  key={recentProject.rootPath}
-                  className="recent-project-button"
-                  appearance="subtle"
-                  onClick={() => void openSession(() => window.invoiceManager.openRecentProject(recentProject.rootPath))}
-                >
-                  <span className="recent-project-content">
-                    <strong>{recentProject.name}</strong>
-                    <span>{recentProject.rootPath}</span>
-                  </span>
-                </Button>
-              )) : <p>暂无最近项目</p>}
+              <div className="recent-project-list">
+                {appSettings.recentProjects.length ? appSettings.recentProjects.map((recentProject) => (
+                  <Button
+                    key={recentProject.rootPath}
+                    className="recent-project-button"
+                    appearance="subtle"
+                    onClick={() => void openSession(() => window.invoiceManager.openRecentProject(recentProject.rootPath))}
+                  >
+                    <span className="recent-project-content">
+                      <strong>{recentProject.name}</strong>
+                      <span>{recentProject.rootPath}</span>
+                    </span>
+                  </Button>
+                )) : <p>暂无最近项目</p>}
+              </div>
             </div>
           </div>
         </main>

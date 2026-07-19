@@ -72,7 +72,7 @@ button, input, select { font: inherit; }
 
 /* Welcome */
 .welcome { flex: 1; display: flex; align-items: center; justify-content: center; padding: 32px; }
-.welcome-card { width: 560px; max-height: calc(100vh - 80px); overflow: auto; padding: 48px 44px 40px; text-align: center; background: #ffffff; border: 1px solid var(--c-border); border-radius: var(--r-lg); box-shadow: var(--shadow-xl); animation: welcome-enter .5s var(--ease-spring) both; }
+.welcome-card { width: 560px; max-height: calc(100vh - 80px); overflow: hidden; padding: 48px 44px 40px; display: flex; flex-direction: column; text-align: center; background: #ffffff; border: 1px solid var(--c-border); border-radius: var(--r-lg); box-shadow: var(--shadow-xl); animation: welcome-enter .5s var(--ease-spring) both; }
 @keyframes welcome-enter { from { opacity: 0; transform: translateY(20px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 .welcome-icon { width: 76px; height: 76px; margin: 0 auto 20px; display: grid; place-items: center; }
 .welcome-icon img { width: 76px; height: 76px; display: block; object-fit: contain; }
@@ -81,14 +81,15 @@ button, input, select { font: inherit; }
 .welcome-actions { display: flex; justify-content: center; gap: 12px; margin-bottom: 32px; }
 .welcome-actions .fui-Button { height: 42px; padding: 0 24px; border-radius: var(--r-sm); font-weight: 600; font-size: 14px; transition: all var(--dur-fast) var(--ease-out); }
 .welcome-actions .fui-Button:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
-.recent-projects { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--c-border); text-align: left; }
+.recent-projects { min-height: 0; margin-top: 24px; padding-top: 24px; display: flex; flex: 1 1 auto; flex-direction: column; overflow: hidden; border-top: 1px solid var(--c-border); text-align: left; }
 .recent-projects h3 { margin: 0 0 12px; font-size: 12px; font-weight: 700; color: var(--c-text-2); text-transform: uppercase; letter-spacing: .06em; }
+.recent-project-list { min-height: 0; overflow-x: hidden; overflow-y: auto; padding-right: 4px; }
 .recent-project-button { width: 100%; min-height: 52px; margin-top: 6px; padding: 10px 14px; justify-content: flex-start; border-radius: var(--r-sm); border: 1px solid var(--c-border); background: var(--c-surface-2); cursor: pointer; transition: all var(--dur-fast) var(--ease-out); }
 .recent-project-button:hover { border-color: var(--c-accent); background: #ffffff; box-shadow: var(--shadow-sm); transform: translateX(2px); }
 .recent-project-content { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; }
 .recent-project-content > strong { font-size: 14px; font-weight: 600; color: var(--c-text-0); }
 .recent-project-content > span { width: 100%; color: var(--c-text-3); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.recent-projects > p { margin: 0; color: var(--c-text-3); font-size: 13px; text-align: center; padding: 20px 0; }
+.recent-project-list > p { margin: 0; color: var(--c-text-3); font-size: 13px; text-align: center; padding: 20px 0; }
 
 /* Workspace */
 .workspace { flex: 1; min-height: 0; padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr); }
@@ -172,7 +173,8 @@ button, input, select { font: inherit; }
 .expense-table td .fui-Input input { text-align: center; }
 .expense-table td .custom-select-trigger { text-align: center !important; }
 .expense-table td .custom-select-trigger > span { flex: 1; text-align: center; }
-.expense-table .date-input input { cursor: text; font-variant-numeric: tabular-nums; }
+.expense-table td .date-input { padding-right: 0 !important; background-color: transparent !important; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") !important; background-repeat: no-repeat !important; background-position: right 10px center !important; background-size: 14px 14px !important; }
+.expense-table td .date-input input { padding-right: 34px; cursor: text; font-variant-numeric: tabular-nums; background: transparent !important; appearance: none; -webkit-appearance: none; }
 .expense-table td .fui-Input:hover, .expense-table td .custom-select-trigger:hover { border-color: var(--c-border-strong) !important; background: #ffffff !important; }
 .expense-table td .fui-Input:focus-within, .expense-table td .custom-select-trigger:focus-visible, .expense-table td .custom-select-trigger[aria-expanded="true"] { border-color: var(--c-accent) !important; background: #ffffff !important; box-shadow: var(--shadow-glow) !important; }
 

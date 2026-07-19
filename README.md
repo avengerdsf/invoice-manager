@@ -47,6 +47,10 @@ npm run dist:win
 
 Windows 正式发布如需消除 SmartScreen 的未知发布者提示，需要配置代码签名证书。
 
+### Windows 覆盖升级
+
+发布新版本时先更新 `package.json` 中的 `version`，重新执行 `npm run dist:win`。用户可以直接运行新版安装包覆盖安装，不需要先卸载旧版本。安装器会在升级前临时备份 `<安装目录>/data`，安装完成后自动恢复，因此全局付款人、最近项目和路径记忆会保留。项目数据位于独立的 `.invoice-project` 目录，本身不会被安装器修改。
+
 ## Ubuntu 构建
 
 建议使用 Ubuntu 22.04 或 24.04 x64。安装 Node.js、npm 及构建依赖：
