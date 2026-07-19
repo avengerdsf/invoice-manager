@@ -114,6 +114,13 @@ export class AppSettingsStorage {
     return settings
   }
 
+  async rememberOpenProjectDirectory(directoryPath: string): Promise<AppSettings> {
+    const settings = await this.read()
+    settings.lastOpenProjectDirectory = directoryPath
+    await this.write(settings)
+    return settings
+  }
+
   async rememberExportDirectory(directoryPath: string): Promise<AppSettings> {
     const settings = await this.read()
     settings.lastExportDirectory = directoryPath

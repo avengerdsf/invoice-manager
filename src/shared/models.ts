@@ -84,6 +84,7 @@ export const AppSettingsSchema = z.object({
     payment: z.string().min(1).optional(),
   }).default({}),
   lastProjectParentDirectory: z.string().min(1).optional(),
+  lastOpenProjectDirectory: z.string().min(1).optional(),
   lastExportDirectory: z.string().min(1).optional(),
 })
 export type AppSettings = z.infer<typeof AppSettingsSchema>

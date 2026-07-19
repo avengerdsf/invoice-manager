@@ -109,7 +109,9 @@ function registerIpc(): void {
     const settings = await settingsStorage.read()
     const selection = await dialog.showOpenDialog(mainWindow!, {
       title: '选择项目保存位置',
-      defaultPath: settings.lastProjectParentDirectory,
+      defaultPath: settings.lastProjectParentDirectory && existsSync(settings.lastProjectParentDirectory)
+        ? settings.lastProjectParentDirectory
+        : undefined,
       properties: ['openDirectory', 'createDirectory'],
     })
     if (selection.canceled || !selection.filePaths[0]) return null
@@ -120,12 +122,17 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.openProject, async () => {
+    const settings = await settingsStorage.read()
     const selection = await dialog.showOpenDialog(mainWindow!, {
       title: '打开本地项目',
+      defaultPath: settings.lastOpenProjectDirectory && existsSync(settings.lastOpenProjectDirectory)
+        ? settings.lastOpenProjectDirectory
+        : undefined,
       properties: ['openDirectory'],
     })
     if (selection.canceled || !selection.filePaths[0]) return null
     const session = await storage.open(selection.filePaths[0])
+    await settingsStorage.rememberOpenProjectDirectory(selection.filePaths[0])
     await settingsStorage.rememberProject(session)
     return session
   })
@@ -150,9 +157,13 @@ function registerIpc(): void {
   ipcMain.handle(IPC_CHANNELS.importAttachments, async (_event, rawKind: unknown) => {
     if (rawKind !== 'invoice' && rawKind !== 'payment') throw new Error('附件类型无效')
     const kind = rawKind as AttachmentKind
+    const settings = await settingsStorage.read()
     const selection = await dialog.showOpenDialog(mainWindow!, {
       title: kind === 'invoice' ? '选择发票' : '选择支付截图',
-      defaultPath: (await settingsStorage.read()).lastImportDirectories[kind],
+      defaultPath: (() => {
+        const directoryPath = settings.lastImportDirectories[kind]
+        return directoryPath && existsSync(directoryPath) ? directoryPath : undefined
+      })(),
       properties: ['openFile', 'multiSelections'],
       filters: [{ name: '支持的附件', extensions: ['pdf', 'jpg', 'jpeg', 'png', 'webp'] }],
     })
@@ -284,7 +295,12 @@ function registerIpc(): void {
     const selection = await dialog.showSaveDialog(mainWindow!, {
       title: '选择导出位置',
       buttonLabel: '导出',
-      defaultPath: path.join(settings.lastExportDirectory ?? app.getPath('documents'), suggestedFileName),
+      defaultPath: path.join(
+        settings.lastExportDirectory && existsSync(settings.lastExportDirectory)
+          ? settings.lastExportDirectory
+          : app.getPath('documents'),
+        suggestedFileName,
+      ),
       filters: [{ name: 'ZIP 压缩包', extensions: ['zip'] }],
     })
     if (selection.canceled || !selection.filePath) return null
