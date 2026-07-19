@@ -1,6 +1,6 @@
 ﻿import { mkdirSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
-import { cpSync, existsSync, rmSync } from 'node:fs'
+import { readFile, rm } from 'node:fs/promises'
+import { copyFileSync, cpSync, existsSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } from 'electron'
@@ -14,15 +14,29 @@ import { calculateProjectSummary } from '../src/domain/project'
 function configureInstalledDataPath(): void {
   if (!app.isPackaged || process.platform !== 'win32') return
   const legacyUserDataPath = app.getPath('userData')
-  const installedDataPath = path.join(path.dirname(process.execPath), 'data')
+  const installDirectory = path.dirname(process.execPath)
+  const installedDataPath = path.join(installDirectory, 'data')
+  const updateBackupPath = `${installDirectory}.__update-data`
   if (path.resolve(legacyUserDataPath).toLowerCase() === path.resolve(installedDataPath).toLowerCase()) return
+
+  // An updater can fail to rename the preserved directory back because of a
+  // transient file lock. Recover it before creating an empty data directory.
+  const installedSettingsPath = path.join(installedDataPath, 'settings.json')
+  const updateBackupSettingsPath = path.join(updateBackupPath, 'settings.json')
+  if (!existsSync(installedSettingsPath) && existsSync(updateBackupSettingsPath)) {
+    cpSync(updateBackupPath, installedDataPath, { recursive: true, force: false, errorOnExist: false })
+    if (existsSync(installedSettingsPath)) rmSync(updateBackupPath, { recursive: true, force: true })
+  }
 
   mkdirSync(installedDataPath, { recursive: true })
   if (existsSync(legacyUserDataPath)) {
-    cpSync(legacyUserDataPath, installedDataPath, { recursive: true, force: false, errorOnExist: false })
     const legacySettingsPath = path.join(legacyUserDataPath, 'settings.json')
-    if (!existsSync(legacySettingsPath) || existsSync(path.join(installedDataPath, 'settings.json'))) {
-      rmSync(legacyUserDataPath, { recursive: true, force: true })
+    if (!existsSync(installedSettingsPath) && existsSync(legacySettingsPath)) {
+      copyFileSync(legacySettingsPath, installedSettingsPath)
+    }
+    if (existsSync(installedSettingsPath)) {
+      // Do not block the first launch while deleting old Electron caches.
+      void rm(legacyUserDataPath, { recursive: true, force: true }).catch(() => undefined)
     }
   }
   app.setPath('userData', installedDataPath)

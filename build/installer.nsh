@@ -11,28 +11,39 @@
       MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "发票整理助手正在运行。请先关闭应用，然后单击“重试”继续安装。" /SD IDCANCEL IDRETRY checkInvoiceManagerRunning
       ${nsProcess::Unload}
       Quit
-    ${EndIf}
+  ${EndIf}
   ${nsProcess::Unload}
+
+  ; CHECK_APP_RUNNING is invoked immediately before the previous version is
+  ; uninstalled. Preserve user data here, only after the old application has
+  ; actually exited. Doing this in customInit is too early: that hook runs as
+  ; soon as Setup opens, before the close-app prompt is shown.
+  IfFileExists "$INSTDIR\data\settings.json" 0 preserveDataAfterCloseDone
+  RMDir /r "$INSTDIR.__update-data"
+  Rename "$INSTDIR\data" "$INSTDIR.__update-data"
+  preserveDataAfterCloseDone:
 !macroend
 
 !ifndef BUILD_UNINSTALLER
   Var customInstallDirectoryInput
   Var customInstallBrowseButton
 
-  ; Preserve application data while electron-builder removes the previous
-  ; installation during an in-place update. The sibling directory is outside
-  ; $INSTDIR, so the old uninstaller cannot remove it.
-  !macro customInit
-    IfFileExists "$INSTDIR\data\settings.json" 0 preserveDataDone
-    RMDir /r "$INSTDIR.__update-data"
-    Rename "$INSTDIR\data" "$INSTDIR.__update-data"
-    preserveDataDone:
-  !macroend
-
   !macro customInstall
     IfFileExists "$INSTDIR.__update-data\settings.json" 0 restoreDataDone
-    RMDir /r "$INSTDIR\data"
+    ; Never delete the newly-created data directory before the preserved data
+    ; has been restored successfully. Keep it aside so a failed Rename can be
+    ; rolled back instead of starting the application with empty settings.
+    RMDir /r "$INSTDIR.__new-data"
+    IfFileExists "$INSTDIR\data\*.*" 0 restorePreservedData
+    Rename "$INSTDIR\data" "$INSTDIR.__new-data"
+    restorePreservedData:
     Rename "$INSTDIR.__update-data" "$INSTDIR\data"
+    IfFileExists "$INSTDIR\data\settings.json" restoreDataSucceeded 0
+    IfFileExists "$INSTDIR.__new-data\*.*" 0 restoreDataDone
+    Rename "$INSTDIR.__new-data" "$INSTDIR\data"
+    Goto restoreDataDone
+    restoreDataSucceeded:
+    RMDir /r "$INSTDIR.__new-data"
     restoreDataDone:
   !macroend
 
