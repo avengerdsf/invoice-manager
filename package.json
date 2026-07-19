@@ -45,7 +45,7 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "allowToChangeInstallationDirectory": false,
       "include": "build/installer.nsh",
       "perMachine": false,
       "deleteAppDataOnUninstall": false,
