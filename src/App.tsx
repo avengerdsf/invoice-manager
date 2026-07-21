@@ -753,7 +753,7 @@ export default function App() {
           if (!data.open) setMissingRecentProject(null)
         }}
       >
-        <DialogSurface>
+        <DialogSurface className="attachment-manager-dialog">
           <DialogBody>
             <DialogTitle>项目不存在或已移动</DialogTitle>
             <DialogContent>
