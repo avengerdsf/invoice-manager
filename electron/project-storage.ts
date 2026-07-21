@@ -104,6 +104,7 @@ export class ProjectStorage {
       attachments: [],
       invoiceAllocations: [],
       paymentAllocations: [],
+      otherAllocations: [],
     }
     this.rootPath = rootPath
     this.project = project
@@ -162,7 +163,7 @@ export class ProjectStorage {
   async importFiles(kind: AttachmentKind, sourcePaths: string[]): Promise<Attachment[]> {
     if (!this.rootPath || !this.project) throw new Error('请先创建或打开项目')
     if (this.readOnly) throw new Error('只读项目不能导入附件')
-    const directoryName = kind === 'invoice' ? 'invoices' : 'payments'
+    const directoryName = kind === 'invoice' ? 'invoices' : kind === 'payment' ? 'payments' : 'others'
     const targetDirectory = path.join(this.rootPath, 'assets', directoryName)
     const imported: Attachment[] = []
 
@@ -262,6 +263,7 @@ export class ProjectStorage {
     await Promise.all([
       mkdir(path.join(rootPath, 'assets', 'invoices'), { recursive: true }),
       mkdir(path.join(rootPath, 'assets', 'payments'), { recursive: true }),
+      mkdir(path.join(rootPath, 'assets', 'others'), { recursive: true }),
       mkdir(path.join(rootPath, 'cache', 'thumbnails'), { recursive: true }),
       mkdir(path.join(rootPath, 'backup'), { recursive: true }),
     ])

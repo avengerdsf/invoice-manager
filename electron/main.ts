@@ -184,11 +184,11 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.importAttachments, async (_event, rawKind: unknown) => {
-    if (rawKind !== 'invoice' && rawKind !== 'payment') throw new Error('附件类型无效')
+    if (rawKind !== 'invoice' && rawKind !== 'payment' && rawKind !== 'other') throw new Error('附件类型无效')
     const kind = rawKind as AttachmentKind
     const settings = await settingsStorage.read()
     const selection = await dialog.showOpenDialog(mainWindow!, {
-      title: kind === 'invoice' ? '选择发票' : '选择支付截图',
+      title: kind === 'invoice' ? '选择发票' : kind === 'payment' ? '选择支付截图' : '选择其他附件',
       defaultPath: (() => {
         const directoryPath = settings.lastImportDirectories[kind]
         return directoryPath && existsSync(directoryPath) ? directoryPath : undefined
@@ -202,7 +202,7 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.importDroppedAttachments, async (_event, rawKind: unknown, rawPaths: unknown) => {
-    if (rawKind !== 'invoice' && rawKind !== 'payment') throw new Error('附件类型无效')
+    if (rawKind !== 'invoice' && rawKind !== 'payment' && rawKind !== 'other') throw new Error('附件类型无效')
     if (!Array.isArray(rawPaths) || !rawPaths.every((filePath) => typeof filePath === 'string' && path.isAbsolute(filePath))) {
       throw new Error('拖入的文件路径无效')
     }
@@ -373,4 +373,3 @@ app.on('window-all-closed', () => app.quit())
 app.on('before-quit', () => {
   void storage.close()
 })
-

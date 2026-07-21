@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const AttachmentKindSchema = z.enum(['invoice', 'payment'])
+export const AttachmentKindSchema = z.enum(['invoice', 'payment', 'other'])
 export type AttachmentKind = z.infer<typeof AttachmentKindSchema>
 
 export const CategorySchema = z.object({
@@ -57,6 +57,7 @@ export const ProjectSchema = z.object({
   attachments: z.array(AttachmentSchema),
   invoiceAllocations: z.array(AllocationSchema),
   paymentAllocations: z.array(AllocationSchema),
+  otherAllocations: z.array(AllocationSchema).default([]),
 })
 export type Project = z.infer<typeof ProjectSchema>
 
@@ -82,6 +83,7 @@ export const AppSettingsSchema = z.object({
   lastImportDirectories: z.object({
     invoice: z.string().min(1).optional(),
     payment: z.string().min(1).optional(),
+    other: z.string().min(1).optional(),
   }).default({}),
   lastProjectParentDirectory: z.string().min(1).optional(),
   lastOpenProjectDirectory: z.string().min(1).optional(),
