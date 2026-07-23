@@ -7,7 +7,17 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } from 
 import { AppSettingsStorage } from './app-settings'
 import { exportProject } from './exporter'
 import { ProjectStorage } from './project-storage'
-import type { AttachmentKind, ExportOptions, Project, ProjectFundsSummary } from '../src/shared/models'
+import type {
+  AttachmentKind,
+  ExportOptions,
+  Project,
+  ProjectFundsSummary,
+  PayerUsage,
+  SettingsDirectoryKind,
+  DirectoryStatus,
+  RecentProjectStatus,
+  AppDiagnostics,
+} from '../src/shared/models'
 import { IPC_CHANNELS, ProjectSchema } from '../src/shared/models'
 import { calculateProjectSummary } from '../src/domain/project'
 
@@ -160,6 +170,10 @@ function registerIpc(): void {
     return session
   })
 
+  ipcMain.handle(IPC_CHANNELS.closeCurrentProject, async () => {
+    await storage.close()
+  })
+
   ipcMain.handle(IPC_CHANNELS.checkRecentProject, (_event, rawRootPath: unknown) => (
     typeof rawRootPath === 'string' && existsSync(path.join(rawRootPath, 'project.json'))
   ))
@@ -184,11 +198,11 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.importAttachments, async (_event, rawKind: unknown) => {
-    if (rawKind !== 'invoice' && rawKind !== 'payment') throw new Error('附件类型无效')
+    if (rawKind !== 'invoice' && rawKind !== 'payment' && rawKind !== 'other') throw new Error('附件类型无效')
     const kind = rawKind as AttachmentKind
     const settings = await settingsStorage.read()
     const selection = await dialog.showOpenDialog(mainWindow!, {
-      title: kind === 'invoice' ? '选择发票' : '选择支付截图',
+      title: kind === 'invoice' ? '选择发票' : kind === 'payment' ? '选择支付截图' : '选择其他附件',
       defaultPath: (() => {
         const directoryPath = settings.lastImportDirectories[kind]
         return directoryPath && existsSync(directoryPath) ? directoryPath : undefined
@@ -202,7 +216,7 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.importDroppedAttachments, async (_event, rawKind: unknown, rawPaths: unknown) => {
-    if (rawKind !== 'invoice' && rawKind !== 'payment') throw new Error('附件类型无效')
+    if (rawKind !== 'invoice' && rawKind !== 'payment' && rawKind !== 'other') throw new Error('附件类型无效')
     if (!Array.isArray(rawPaths) || !rawPaths.every((filePath) => typeof filePath === 'string' && path.isAbsolute(filePath))) {
       throw new Error('拖入的文件路径无效')
     }
@@ -250,6 +264,7 @@ function registerIpc(): void {
     const currentProject = rawCurrentProject === undefined ? null : ProjectSchema.parse(rawCurrentProject)
     const activeRoot = storage.activeRoot
     const projects: ProjectFundsSummary[] = []
+    const categoryTotals = new Map<string, number>()
     const payerTotals = new Map<string, { totalCents: number; reimbursedCents: number; unreimbursedCents: number }>()
     for (const rootPath of [...new Set(settings.knownProjectPaths)]) {
       try {
@@ -257,6 +272,9 @@ function registerIpc(): void {
           ? currentProject
           : ProjectSchema.parse(JSON.parse(await readFile(path.join(rootPath, 'project.json'), 'utf8')))
         const summary = calculateProjectSummary(project)
+        for (const category of summary.categories) {
+          categoryTotals.set(category.categoryName, (categoryTotals.get(category.categoryName) ?? 0) + category.totalCents)
+        }
         for (const expense of project.expenses) {
           const payerName = expense.actualPayer.trim() || '未设置付款人'
           const totalCents = expense.priceCents + expense.taxCents
@@ -282,6 +300,10 @@ function registerIpc(): void {
     }
     return {
       projects,
+      categories: [...categoryTotals.entries()]
+        .map(([categoryName, totalCents]) => ({ categoryName, totalCents }))
+        .filter((item) => item.totalCents > 0)
+        .sort((left, right) => right.totalCents - left.totalCents),
       payers: [...payerTotals.entries()]
         .map(([payerName, totals]) => ({ payerName, ...totals }))
         .sort((left, right) => right.unreimbursedCents - left.unreimbursedCents),
@@ -318,7 +340,9 @@ function registerIpc(): void {
     if (!storage.activeRoot) throw new Error('请先打开一个项目')
     const project = await storage.save(ProjectSchema.parse(rawProject))
     const options = rawOptions as ExportOptions
-    if (typeof options?.includePayments !== 'boolean') throw new Error('导出选项无效')
+    if (typeof options?.includePayments !== 'boolean' || typeof options?.includeOtherAttachments !== 'boolean') {
+      throw new Error('导出选项无效')
+    }
     const settings = await settingsStorage.read()
     const suggestedFileName = `${project.name}_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.zip`
     const selection = await dialog.showSaveDialog(mainWindow!, {
@@ -350,6 +374,234 @@ function registerIpc(): void {
     }
     return { filePath: selection.filePath, project }
   })
+
+  // 新增：获取付款人使用统计
+  ipcMain.handle(IPC_CHANNELS.getPayerUsage, async () => {
+    const settings = await settingsStorage.read()
+    const projectPaths = [...new Set([
+      ...settings.knownProjectPaths,
+      ...settings.recentProjects.map((project) => project.rootPath),
+    ])]
+    const usage = new Map<string, PayerUsage>()
+    for (const payerName of settings.payerNames) {
+      usage.set(payerName, { payerName, projectCount: 0, expenseCount: 0 })
+    }
+    for (const rootPath of projectPaths) {
+      try {
+        const project = ProjectSchema.parse(JSON.parse(await readFile(path.join(rootPath, 'project.json'), 'utf8')))
+        for (const expense of project.expenses) {
+          const payerName = expense.actualPayer.trim() || '未设置付款人'
+          const entry = usage.get(payerName)
+          if (entry) {
+            entry.expenseCount += 1
+          }
+        }
+        for (const payerName of usage.keys()) {
+          if (project.expenses.some((expense) => (expense.actualPayer.trim() || '未设置付款人') === payerName)) {
+            const entry = usage.get(payerName)!
+            entry.projectCount += 1
+          }
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+    }
+    return Array.from(usage.values()).filter((u) => u.projectCount > 0 || u.expenseCount > 0)
+  })
+
+  // 新增：选择设置目录
+  ipcMain.handle(IPC_CHANNELS.chooseSettingsDirectory, async (_event, rawKind: unknown) => {
+    const validKinds: SettingsDirectoryKind[] = ['projectParent', 'openProject', 'invoiceImport', 'paymentImport', 'otherImport', 'export']
+    if (typeof rawKind !== 'string' || !validKinds.includes(rawKind as SettingsDirectoryKind)) {
+      throw new Error('目录类型无效')
+    }
+    const kind = rawKind as SettingsDirectoryKind
+    const settings = await settingsStorage.read()
+
+    let defaultPath: string | undefined
+    let title = '选择目录'
+
+    switch (kind) {
+      case 'projectParent':
+        title = '选择新建项目的默认父目录'
+        defaultPath = settings.lastProjectParentDirectory && existsSync(settings.lastProjectParentDirectory)
+          ? settings.lastProjectParentDirectory
+          : undefined
+        break
+      case 'openProject':
+        title = '选择打开项目的默认目录'
+        defaultPath = settings.lastOpenProjectDirectory && existsSync(settings.lastOpenProjectDirectory)
+          ? settings.lastOpenProjectDirectory
+          : undefined
+        break
+      case 'invoiceImport':
+        title = '选择发票导入默认目录'
+        defaultPath = settings.lastImportDirectories.invoice && existsSync(settings.lastImportDirectories.invoice)
+          ? settings.lastImportDirectories.invoice
+          : undefined
+        break
+      case 'paymentImport':
+        title = '选择支付截图导入默认目录'
+        defaultPath = settings.lastImportDirectories.payment && existsSync(settings.lastImportDirectories.payment)
+          ? settings.lastImportDirectories.payment
+          : undefined
+        break
+      case 'otherImport':
+        title = '选择其他附件导入默认目录'
+        defaultPath = settings.lastImportDirectories.other && existsSync(settings.lastImportDirectories.other)
+          ? settings.lastImportDirectories.other
+          : undefined
+        break
+      case 'export':
+        title = '选择导出默认目录'
+        defaultPath = settings.lastExportDirectory && existsSync(settings.lastExportDirectory)
+          ? settings.lastExportDirectory
+          : app.getPath('documents')
+        break
+    }
+
+    const selection = await dialog.showOpenDialog(mainWindow!, {
+      title,
+      defaultPath,
+      properties: ['openDirectory', 'createDirectory'],
+    })
+
+    if (selection.canceled || !selection.filePaths[0]) return null
+    return selection.filePaths[0]
+  })
+
+  // 新增：检查设置目录状态
+  ipcMain.handle(IPC_CHANNELS.checkSettingsDirectories, async () => {
+    const settings = await settingsStorage.read()
+    const validKinds: SettingsDirectoryKind[] = ['projectParent', 'openProject', 'invoiceImport', 'paymentImport', 'otherImport', 'export']
+    const result: DirectoryStatus = {} as DirectoryStatus
+
+    for (const kind of validKinds) {
+      result[kind] = null
+    }
+
+    if (settings.lastProjectParentDirectory) {
+      result.projectParent = existsSync(settings.lastProjectParentDirectory)
+    }
+    if (settings.lastOpenProjectDirectory) {
+      result.openProject = existsSync(settings.lastOpenProjectDirectory)
+    }
+    if (settings.lastExportDirectory) {
+      result.export = existsSync(settings.lastExportDirectory)
+    }
+    if (settings.lastImportDirectories.invoice) {
+      result.invoiceImport = existsSync(settings.lastImportDirectories.invoice)
+    }
+    if (settings.lastImportDirectories.payment) {
+      result.paymentImport = existsSync(settings.lastImportDirectories.payment)
+    }
+    if (settings.lastImportDirectories.other) {
+      result.otherImport = existsSync(settings.lastImportDirectories.other)
+    }
+
+    return result
+  })
+
+  // 新增：获取最近项目状态
+  ipcMain.handle(IPC_CHANNELS.getRecentProjectStatuses, async () => {
+    const settings = await settingsStorage.read()
+    const result: RecentProjectStatus[] = []
+
+    for (const recent of settings.recentProjects) {
+      const available = existsSync(path.join(recent.rootPath, 'project.json'))
+      result.push({ ...recent, available })
+    }
+
+    return result
+  })
+
+  // 新增：移除无效最近项目
+  ipcMain.handle(IPC_CHANNELS.removeInvalidRecentProjects, async () => {
+    return await settingsStorage.removeInvalidRecentProjects()
+  })
+
+  // 新增：重新定位最近项目
+  ipcMain.handle(IPC_CHANNELS.relocateRecentProject, async (_event, oldRootPath: unknown) => {
+    if (typeof oldRootPath !== 'string') throw new Error('旧项目路径无效')
+
+    const settings = await settingsStorage.read()
+    const oldRecord = settings.recentProjects.find((p) => p.rootPath === oldRootPath)
+    if (!oldRecord) throw new Error('项目不存在于最近记录中')
+
+    const selection = await dialog.showOpenDialog(mainWindow!, {
+      title: '选择项目的新位置',
+      properties: ['openDirectory'],
+    })
+
+    if (selection.canceled || !selection.filePaths[0]) return null
+
+    const newRootPath = selection.filePaths[0]
+    const projectPath = path.join(newRootPath, 'project.json')
+
+    if (!existsSync(projectPath)) {
+      throw new Error('所选目录不是有效的项目目录')
+    }
+
+    const project = ProjectSchema.parse(JSON.parse(await readFile(projectPath, 'utf8')))
+
+    // 如果旧路径可读，比较项目 ID
+    try {
+      const oldProject = ProjectSchema.parse(JSON.parse(await readFile(path.join(oldRootPath, 'project.json'), 'utf8')))
+      if (oldProject.id !== project.id) {
+        throw new Error('所选项目与原项目不匹配')
+      }
+    } catch {
+      // 旧路径不可读，要求用户确认
+      const confirmation = await dialog.showMessageBox(mainWindow!, {
+        type: 'warning',
+        title: '项目不匹配',
+        message: '无法读取原项目，所选项目将替换该记录',
+        buttons: ['继续', '取消'],
+        defaultId: 0,
+        cancelId: 1,
+      })
+      if (confirmation.response === 1) return null
+    }
+
+    // 使用新的公共方法更新记录
+    return await settingsStorage.relocateRecentProject(oldRootPath, newRootPath, project)
+  })
+
+  // 新增：获取应用诊断信息
+  ipcMain.handle(IPC_CHANNELS.getAppDiagnostics, async () => {
+    const userDataPath = app.getPath('userData')
+    const ocrModelPath = path.join(rendererRoot(), 'ocr')
+    const modelConfigPath = path.join(ocrModelPath, 'model-config.json')
+    const checksumsPath = path.join(ocrModelPath, 'checksums.json')
+
+    let ocrModelReady = false
+    try {
+      ocrModelReady = [
+        modelConfigPath,
+        checksumsPath,
+        path.join(ocrModelPath, 'text-detection.onnx'),
+        path.join(ocrModelPath, 'text-recognition.onnx'),
+      ].every(existsSync)
+    } catch {
+      ocrModelReady = false
+    }
+
+    return {
+      productName: app.getName(),
+      version: app.getVersion(),
+      platform: process.platform,
+      arch: process.arch,
+      userDataPath,
+      ocrModelReady,
+    } as AppDiagnostics
+  })
+
+  // 新增：打开应用数据目录
+  ipcMain.handle(IPC_CHANNELS.openAppDataDirectory, async () => {
+    const userDataPath = app.getPath('userData')
+    const error = await shell.openPath(userDataPath)
+    if (error) throw new Error(error)
+  })
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -373,4 +625,3 @@ app.on('window-all-closed', () => app.quit())
 app.on('before-quit', () => {
   void storage.close()
 })
-

@@ -1,0 +1,82 @@
+.settings-center-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  border-top: 1px solid var(--c-border);
+  background-color: var(--c-surface-0);
+}
+
+.settings-footer-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.settings-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-dirty-text {
+  font-size: 13px;
+  color: var(--c-accent);
+}
+
+.settings-error-message {
+  font-size: 13px;
+  color: var(--c-danger);
+  margin-right: 8px;
+}
+
+.settings-button {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: 1px solid transparent;
+}
+
+.settings-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-button-primary {
+  background-color: var(--c-accent);
+  color: white;
+}
+
+.settings-button-primary:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.settings-button-secondary {
+  background-color: var(--c-surface-2);
+  color: var(--c-text-0);
+  border-color: var(--c-border);
+}
+
+.settings-button-secondary:hover:not(:disabled) {
+  background-color: var(--c-surface-3);
+}
+
+.settings-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: settings-spin 0.6s linear infinite;
+  margin-right: 8px;
+}
+
+@keyframes settings-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

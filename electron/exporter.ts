@@ -3,7 +3,7 @@ import { copyFile, mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import ExcelJS from 'exceljs'
 import { calculateProjectSummary, expenseTotalCents } from '../src/domain/project'
-import type { Attachment, ExportOptions, Project } from '../src/shared/models'
+import type { Attachment, AttachmentKind, ExportOptions, Project } from '../src/shared/models'
 
 function safeName(value: string): string {
   const result = value.trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/g, '').slice(0, 80)
@@ -161,21 +161,23 @@ export async function exportProject(
   archive.append(await buildWorkbook(project), { name: '报销明细表.xlsx' })
 
   const expenseMap = new Map(project.expenses.map((item) => [item.id, item]))
-  const appendKind = (kind: 'invoice' | 'payment', include: boolean): void => {
+  const appendKind = (kind: AttachmentKind, include: boolean): void => {
     if (!include) return
-    const allocations = kind === 'invoice' ? project.invoiceAllocations : project.paymentAllocations
+    const allocations = kind === 'invoice' ? project.invoiceAllocations : kind === 'payment' ? project.paymentAllocations : project.otherAllocations
     const attachmentExpense = new Map(allocations.map((item) => [item.attachmentId, item.expenseId]))
     const attachments = project.attachments.filter((item) => item.kind === kind && attachmentExpense.has(item.id))
     attachments.forEach((attachment, index) => {
       const expense = expenseMap.get(attachmentExpense.get(attachment.id) ?? '')
       const sequence = String(index + 1).padStart(3, '0')
       const payerName = safeName(expense?.actualPayer.trim() || '未设置付款人')
-      const exportedName = `${kind === 'invoice' ? '发票' : '支付截图'}/${sequence}_${safeName(expense?.name ?? '')}_${payerName}${attachmentExtension(attachment)}`
+      const directoryName = kind === 'invoice' ? '发票' : kind === 'payment' ? '支付截图' : '其他附件'
+      const exportedName = `${directoryName}/${sequence}_${safeName(expense?.name ?? '')}_${payerName}${attachmentExtension(attachment)}`
       archive.file(resolveAttachment(rootPath, attachment.storedPath), { name: exportedName })
     })
   }
   appendKind('invoice', true)
   appendKind('payment', options.includePayments)
+  appendKind('other', options.includeOtherAttachments ?? true)
   await archive.finalize()
   await completed
   await copyFile(temporaryPath, destinationPath)
