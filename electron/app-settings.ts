@@ -6,6 +6,7 @@ import {
   ProjectSchema,
   type AppSettings,
   type AttachmentKind,
+  type Project,
   type ProjectSession,
 } from '../src/shared/models'
 
@@ -30,10 +31,62 @@ export class AppSettingsStorage {
   async saveSettings(rawUpdate: unknown): Promise<AppSettings> {
     const settings = await this.read()
     const update = AppSettingsUpdateSchema.parse(rawUpdate)
+
+    // 比较被移除的付款人并执行 assertPayersUnused()
     const removedPayerNames = settings.payerNames.filter((payerName) => !update.payerNames.includes(payerName))
     if (removedPayerNames.length > 0) await this.assertPayersUnused(settings, removedPayerNames)
+
+    // 更新允许由用户修改的字段
     settings.payerNames = update.payerNames
+    if (update.defaultViewMode !== undefined) settings.defaultViewMode = update.defaultViewMode
+    if (update.defaultIncludePayments !== undefined) settings.defaultIncludePayments = update.defaultIncludePayments
+    if (update.defaultIncludeOtherAttachments !== undefined) settings.defaultIncludeOtherAttachments = update.defaultIncludeOtherAttachments
+    if (update.showProjectHistoryOnStartup !== undefined) settings.showProjectHistoryOnStartup = update.showProjectHistoryOnStartup
+    if (update.autoOpenLastProject !== undefined) settings.autoOpenLastProject = update.autoOpenLastProject
+    if (update.showSuccessMessages !== undefined) settings.showSuccessMessages = update.showSuccessMessages
+
+    // 将路径载荷中的 null 转换为删除属性
+    if (update.lastProjectParentDirectory === null) {
+      delete settings.lastProjectParentDirectory
+    } else if (update.lastProjectParentDirectory !== undefined) {
+      settings.lastProjectParentDirectory = update.lastProjectParentDirectory
+    }
+
+    if (update.lastOpenProjectDirectory === null) {
+      delete settings.lastOpenProjectDirectory
+    } else if (update.lastOpenProjectDirectory !== undefined) {
+      settings.lastOpenProjectDirectory = update.lastOpenProjectDirectory
+    }
+
+    if (update.lastExportDirectory === null) {
+      delete settings.lastExportDirectory
+    } else if (update.lastExportDirectory !== undefined) {
+      settings.lastExportDirectory = update.lastExportDirectory
+    }
+
+    // 处理导入目录
+    if (update.lastImportDirectories?.invoice === null) {
+      delete settings.lastImportDirectories.invoice
+    } else if (update.lastImportDirectories?.invoice !== undefined) {
+      settings.lastImportDirectories.invoice = update.lastImportDirectories.invoice
+    }
+
+    if (update.lastImportDirectories?.payment === null) {
+      delete settings.lastImportDirectories.payment
+    } else if (update.lastImportDirectories?.payment !== undefined) {
+      settings.lastImportDirectories.payment = update.lastImportDirectories.payment
+    }
+
+    if (update.lastImportDirectories?.other === null) {
+      delete settings.lastImportDirectories.other
+    } else if (update.lastImportDirectories?.other !== undefined) {
+      settings.lastImportDirectories.other = update.lastImportDirectories.other
+    }
+
+    // 使用现有临时文件、sync()、重命名和 .bak 流程写入
     await this.write(settings)
+
+    // 返回完整的 AppSettings
     return settings
   }
 
@@ -108,6 +161,57 @@ export class AppSettingsStorage {
   async rememberExportDirectory(directoryPath: string): Promise<AppSettings> {
     const settings = await this.read()
     settings.lastExportDirectory = directoryPath
+    await this.write(settings)
+    return settings
+  }
+
+  async removeInvalidRecentProjects(): Promise<AppSettings> {
+    const settings = await this.read()
+    const validRecent = []
+    const validPaths = new Set<string>()
+
+    for (const recent of settings.recentProjects) {
+      try {
+        ProjectSchema.parse(JSON.parse(await readFile(path.join(recent.rootPath, 'project.json'), 'utf8')))
+        validRecent.push(recent)
+        validPaths.add(recent.rootPath)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+    }
+
+    settings.recentProjects = validRecent
+    const validKnownPaths = [...validPaths]
+    for (const rootPath of settings.knownProjectPaths) {
+      if (validPaths.has(rootPath)) continue
+      try {
+        ProjectSchema.parse(JSON.parse(await readFile(path.join(rootPath, 'project.json'), 'utf8')))
+        validKnownPaths.push(rootPath)
+      } catch {
+        continue
+      }
+    }
+    settings.knownProjectPaths = validKnownPaths
+    await this.write(settings)
+    return settings
+  }
+
+  async relocateRecentProject(oldRootPath: string, newRootPath: string, project: Project): Promise<AppSettings> {
+    const settings = await this.read()
+    const oldRecord = settings.recentProjects.find((p) => p.rootPath === oldRootPath)
+    if (!oldRecord) throw new Error('项目不存在于最近记录中')
+
+    settings.recentProjects = settings.recentProjects.filter((p) => p.rootPath !== oldRootPath && p.rootPath !== newRootPath)
+    settings.recentProjects.unshift({
+      name: project.name,
+      rootPath: newRootPath,
+      lastOpenedAt: new Date().toISOString(),
+    })
+    settings.recentProjects = settings.recentProjects.slice(0, MAX_RECENT_PROJECTS)
+    settings.knownProjectPaths = [
+      newRootPath,
+      ...settings.knownProjectPaths.filter((p) => p !== oldRootPath && p !== newRootPath),
+    ]
     await this.write(settings)
     return settings
   }

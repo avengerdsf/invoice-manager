@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AppSettingsUpdate, AttachmentKind, ExportOptions, InvoiceManagerApi, Project } from '../src/shared/models'
+import type {
+  AppSettingsUpdate,
+  AttachmentKind,
+  ExportOptions,
+  InvoiceManagerApi,
+  Project,
+  SettingsDirectoryKind,
+} from '../src/shared/models'
 
 const IPC_CHANNELS = {
   getSettings: 'settings:get',
@@ -7,6 +14,7 @@ const IPC_CHANNELS = {
   createProject: 'project:create',
   openProject: 'project:open',
   openRecentProject: 'project:open-recent',
+  closeCurrentProject: 'project:close-current',
   checkRecentProject: 'project:check-recent',
   removeRecentProject: 'project:remove-recent',
   saveProject: 'project:save',
@@ -20,6 +28,14 @@ const IPC_CHANNELS = {
   deleteCurrentProject: 'project:delete-current',
   getAllProjectsSummary: 'project:summary-all',
   moveCurrentProject: 'project:move-current',
+  getPayerUsage: 'settings:payer-usage',
+  chooseSettingsDirectory: 'settings:choose-directory',
+  checkSettingsDirectories: 'settings:check-directories',
+  getRecentProjectStatuses: 'settings:recent-project-statuses',
+  removeInvalidRecentProjects: 'settings:remove-invalid-projects',
+  relocateRecentProject: 'settings:relocate-project',
+  getAppDiagnostics: 'app:diagnostics',
+  openAppDataDirectory: 'app:open-data-directory',
 } as const
 
 const api: InvoiceManagerApi = {
@@ -28,6 +44,7 @@ const api: InvoiceManagerApi = {
   createProject: (name: string) => ipcRenderer.invoke(IPC_CHANNELS.createProject, name),
   openProject: () => ipcRenderer.invoke(IPC_CHANNELS.openProject),
   openRecentProject: (rootPath: string) => ipcRenderer.invoke(IPC_CHANNELS.openRecentProject, rootPath),
+  closeCurrentProject: () => ipcRenderer.invoke(IPC_CHANNELS.closeCurrentProject),
   checkRecentProject: (rootPath: string) => ipcRenderer.invoke(IPC_CHANNELS.checkRecentProject, rootPath),
   removeRecentProject: (rootPath: string) => ipcRenderer.invoke(IPC_CHANNELS.removeRecentProject, rootPath),
   saveProject: (project: Project) => ipcRenderer.invoke(IPC_CHANNELS.saveProject, project),
@@ -45,6 +62,14 @@ const api: InvoiceManagerApi = {
   deleteCurrentProject: () => ipcRenderer.invoke(IPC_CHANNELS.deleteCurrentProject),
   getAllProjectsSummary: (currentProject?: Project) => ipcRenderer.invoke(IPC_CHANNELS.getAllProjectsSummary, currentProject),
   moveCurrentProject: () => ipcRenderer.invoke(IPC_CHANNELS.moveCurrentProject),
+  getPayerUsage: () => ipcRenderer.invoke(IPC_CHANNELS.getPayerUsage),
+  chooseSettingsDirectory: (kind: SettingsDirectoryKind) => ipcRenderer.invoke(IPC_CHANNELS.chooseSettingsDirectory, kind),
+  checkSettingsDirectories: () => ipcRenderer.invoke(IPC_CHANNELS.checkSettingsDirectories),
+  getRecentProjectStatuses: () => ipcRenderer.invoke(IPC_CHANNELS.getRecentProjectStatuses),
+  removeInvalidRecentProjects: () => ipcRenderer.invoke(IPC_CHANNELS.removeInvalidRecentProjects),
+  relocateRecentProject: (oldRootPath: string) => ipcRenderer.invoke(IPC_CHANNELS.relocateRecentProject, oldRootPath),
+  getAppDiagnostics: () => ipcRenderer.invoke(IPC_CHANNELS.getAppDiagnostics),
+  openAppDataDirectory: () => ipcRenderer.invoke(IPC_CHANNELS.openAppDataDirectory),
 }
 
 contextBridge.exposeInMainWorld('invoiceManager', api)

@@ -1,0 +1,89 @@
+.settings-section {
+  margin-bottom: 24px;
+}
+
+.settings-fill-page > .settings-section:only-child {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-section:last-child {
+  margin-bottom: 0;
+}
+
+.settings-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 16px 0;
+  color: var(--c-text-0);
+}
+
+.settings-section-content {
+  background-color: var(--c-surface-0);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.settings-fill-page > .settings-section:only-child > .settings-section-content {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 16px 20px;
+  gap: 16px;
+  min-width: 0;
+}
+
+.settings-row:not(:last-child) {
+  border-bottom: 1px solid var(--c-border);
+}
+
+.settings-row-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-row-control {
+  flex-shrink: 0;
+  min-width: 0;
+  max-width: min(360px, 55%);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.settings-label {
+  font-size: 14px;
+  color: var(--c-text-0);
+  font-weight: 500;
+  display: block;
+}
+
+.settings-description {
+  font-size: 13px;
+  color: var(--c-text-2);
+  margin: 4px 0 0 0;
+  line-height: 1.4;
+}
+
+.settings-checkbox {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.settings-checkbox:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

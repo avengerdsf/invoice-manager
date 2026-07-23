@@ -177,7 +177,7 @@ export async function exportProject(
   }
   appendKind('invoice', true)
   appendKind('payment', options.includePayments)
-  appendKind('other', true)
+  appendKind('other', options.includeOtherAttachments ?? true)
   await archive.finalize()
   await completed
   await copyFile(temporaryPath, destinationPath)
