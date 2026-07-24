@@ -128,6 +128,16 @@ function registerIpc(): void {
     return settingsStorage.saveSettings(rawSettings)
   })
 
+  ipcMain.handle(IPC_CHANNELS.saveWorkspaceState, (_event, rawPaths: unknown, rawActivePath: unknown) => {
+    if (!Array.isArray(rawPaths) || !rawPaths.every((item) => typeof item === 'string' && item.length > 0)) {
+      throw new Error('项目标签状态无效')
+    }
+    if (rawActivePath !== null && (typeof rawActivePath !== 'string' || rawActivePath.length === 0)) {
+      throw new Error('当前项目状态无效')
+    }
+    return settingsStorage.saveWorkspaceState(rawPaths, rawActivePath)
+  })
+
   ipcMain.handle(IPC_CHANNELS.createProject, async (_event, rawName: unknown) => {
     if (typeof rawName !== 'string') throw new Error('项目名称无效')
     const settings = await settingsStorage.read()

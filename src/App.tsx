@@ -78,6 +78,7 @@ export default function App() {
     payerNames: [],
     recentProjects: [],
     knownProjectPaths: [],
+    lastOpenProjectPaths: [],
     lastImportDirectories: {},
     defaultViewMode: 'table',
     defaultIncludePayments: true,
@@ -89,6 +90,8 @@ export default function App() {
   const [projectNameDialog, setProjectNameDialog] = useState<string | null>(null)
   const [missingRecentProject, setMissingRecentProject] = useState<{ name: string; rootPath: string } | null>(null)
   const changeVersion = useRef(0)
+  const startupProjectAttempted = useRef(false)
+  const workspaceRestoreFinished = useRef(false)
   const [settingsCenterOpen, setSettingsCenterOpen] = useState(false)
   const saving = useRef(false)
   const projectAddButtonRef = useRef<HTMLButtonElement | null>(null)
@@ -163,6 +166,11 @@ export default function App() {
   const projectAddMenuStyle: CSSProperties | undefined = projectAddMenuPosition
     ? { left: projectAddMenuPosition.left, top: projectAddMenuPosition.top, right: 'auto' }
     : undefined
+  const openProjectPathKey = projectTabs.map((tab) => tab.rootPath).join('\n')
+
+  function showSuccessMessage(successMessage: string) {
+    if (appSettings.showSuccessMessages) setMessage(successMessage)
+  }
 
   useEffect(() => {
     setCategoryFilter('__all__')
@@ -208,15 +216,32 @@ export default function App() {
       return
     }
 
-    void window.invoiceManager.getSettings()
-      .then((settings) => {
+    const initialize = async () => {
+      try {
+        const settings = await window.invoiceManager.getSettings()
         setAppSettings(settings)
         setViewMode(settings.defaultViewMode)
         setIncludePayments(settings.defaultIncludePayments)
         setIncludeOtherAttachments(settings.defaultIncludeOtherAttachments)
-      })
-      .catch((error) => setMessage(`读取应用设置失败：${errorMessage(error)}`))
+        if (!startupProjectAttempted.current && settings.autoOpenLastProject) {
+          startupProjectAttempted.current = true
+          await restoreLastWorkspace(settings)
+        }
+      } catch (error) {
+        setMessage(`读取应用设置失败：${errorMessage(error)}`)
+      } finally {
+        workspaceRestoreFinished.current = true
+      }
+    }
+    void initialize()
   }, [])
+
+  useEffect(() => {
+    if (!workspaceRestoreFinished.current || !window.invoiceManager) return
+    const paths = openProjectPathKey ? openProjectPathKey.split('\n') : []
+    void window.invoiceManager.saveWorkspaceState(paths, session?.rootPath ?? null)
+      .catch((error) => setMessage(`保存项目标签状态失败：${errorMessage(error)}`))
+  }, [openProjectPathKey, session?.rootPath])
 
   useEffect(() => {
     if (!message) return
@@ -283,7 +308,7 @@ export default function App() {
     return () => window.clearTimeout(timer)
   }, [dirty, session])
 
-  const openSession = async (action: () => Promise<ProjectSession | null>) => {
+  async function openSession(action: () => Promise<ProjectSession | null>) {
     setBusy(true)
     try {
       if (dirty && !(await save())) return
@@ -319,12 +344,54 @@ export default function App() {
         })
       }
       setAppSettings(settings)
-      setMessage(opened.readOnly ? '项目已被其他进程占用，当前只读打开' : '项目已打开')
+      if (opened.readOnly) setMessage('项目已被其他进程占用，当前只读打开')
+      else showSuccessMessage('项目已打开')
     } catch (error) {
       setMessage(`打开失败：${errorMessage(error)}`)
     } finally {
       setBusy(false)
     }
+  }
+
+  async function restoreLastWorkspace(settings: AppSettings) {
+    const fallbackPath = settings.recentProjects[0]?.rootPath
+    const savedPaths = settings.lastOpenProjectPaths.length > 0
+      ? settings.lastOpenProjectPaths
+      : fallbackPath ? [fallbackPath] : []
+    if (savedPaths.length === 0) return
+
+    const activePath = settings.lastActiveProjectPath && savedPaths.includes(settings.lastActiveProjectPath)
+      ? settings.lastActiveProjectPath
+      : savedPaths[savedPaths.length - 1]
+    const restoreOrder = [...savedPaths.filter((path) => path !== activePath), activePath]
+    const restoredSessions = new Map<string, ProjectSession>()
+
+    for (const rootPath of restoreOrder) {
+      try {
+        const opened = await window.invoiceManager.openRecentProject(rootPath)
+        restoredSessions.set(rootPath, opened)
+      } catch {
+        // Missing or invalid projects are skipped; the remaining tabs can still be restored.
+      }
+    }
+
+    const restoredPaths = savedPaths.filter((path) => restoredSessions.has(path))
+    const restoredActivePath = restoredSessions.has(activePath)
+      ? activePath
+      : [...restoreOrder].reverse().find((path) => restoredSessions.has(path))
+    if (!restoredActivePath) return
+
+    setProjectTabs(restoredPaths.map((rootPath) => {
+      const opened = restoredSessions.get(rootPath)!
+      return {
+        name: opened.project.name,
+        rootPath: opened.rootPath,
+        expenseCount: opened.project.expenses.length,
+        readOnly: opened.readOnly,
+      }
+    }))
+    setSession(restoredSessions.get(restoredActivePath)!)
+    setAppSettings(await window.invoiceManager.getSettings())
   }
 
   const requestCreateProject = () => {
@@ -503,11 +570,11 @@ export default function App() {
         }
       })
       if (kind !== 'invoice') {
-        setMessage(`已导入 ${imported.length} 个${attachmentLabel(kind)}`)
+        showSuccessMessage(`已导入 ${imported.length} 个${attachmentLabel(kind)}`)
       } else if (recognizedAmounts !== null && shouldFillAmount) {
-        setMessage(`已导入 ${imported.length} 张发票，金额 ¥${formatMoney(recognizedAmounts.amountCents)}，税额 ¥${formatMoney(recognizedAmounts.taxCents)}，价税合计 ¥${formatMoney(recognizedAmounts.totalCents)}`)
+        showSuccessMessage(`已导入 ${imported.length} 张发票，金额 ¥${formatMoney(recognizedAmounts.amountCents)}，税额 ¥${formatMoney(recognizedAmounts.taxCents)}，价税合计 ¥${formatMoney(recognizedAmounts.totalCents)}`)
       } else if (recognizedAmounts !== null) {
-        setMessage(`已识别价税合计 ¥${formatMoney(recognizedAmounts.totalCents)}，已保留现有金额`)
+        showSuccessMessage(`已识别价税合计 ¥${formatMoney(recognizedAmounts.totalCents)}，已保留现有金额`)
       } else {
         setMessage(`已导入 ${imported.length} 张发票；${recognitionError || '未识别到金额，请手动填写'}`)
       }
@@ -548,7 +615,7 @@ export default function App() {
     try {
       setAppSettings(await window.invoiceManager.removeRecentProject(missingRecentProject.rootPath))
       setMissingRecentProject(null)
-      setMessage('已从最近项目中移除')
+      showSuccessMessage('已从最近项目中移除')
     } catch (error) {
       setMessage(`移除记录失败：${errorMessage(error)}`)
     } finally {
@@ -592,7 +659,7 @@ export default function App() {
         draft.otherAllocations = draft.otherAllocations.filter((item) => item.expenseId !== removalRequest.expenseId)
       })
       setRemovalRequest(null)
-      setMessage('明细已删除')
+      showSuccessMessage('明细已删除')
       return
     }
     updateProject((draft) => {
@@ -608,7 +675,7 @@ export default function App() {
       if (!stillReferenced) draft.attachments = draft.attachments.filter((attachment) => attachment.id !== removalRequest.attachmentId)
     })
     setRemovalRequest(null)
-    setMessage('附件已从明细删除')
+    showSuccessMessage('附件已从明细删除')
   }
 
   const exportZip = async () => {
@@ -621,7 +688,7 @@ export default function App() {
       if (!result) return
       setSession((current) => (current ? { ...current, project: result.project } : current))
       setDirty(false)
-      setMessage(`导出完成：${result.filePath}`)
+      showSuccessMessage(`导出完成：${result.filePath}`)
     } catch (error) {
       setMessage(`导出失败：${errorMessage(error)}`)
     } finally {
@@ -629,8 +696,15 @@ export default function App() {
     }
   }
 
+  const openExportDialog = () => {
+    setIncludePayments(appSettings.defaultIncludePayments)
+    setIncludeOtherAttachments(appSettings.defaultIncludeOtherAttachments)
+    setExportDialog(true)
+  }
+
   const closeProjectTab = async (rootPath: string) => {
     const isActive = session?.rootPath === rootPath
+    const closedTabIndex = projectTabs.findIndex((item) => item.rootPath === rootPath)
     const remainingTabs = projectTabs.filter((item) => item.rootPath !== rootPath)
     if (!isActive) {
       setProjectTabs(remainingTabs)
@@ -640,14 +714,16 @@ export default function App() {
     try {
       if (dirty && !(await save())) return
       await window.invoiceManager.closeCurrentProject()
+      const nextTab = remainingTabs[Math.min(closedTabIndex, remainingTabs.length - 1)]
+      if (nextTab) {
+        const opened = await window.invoiceManager.openRecentProject(nextTab.rootPath)
+        setSession(opened)
+      } else {
+        setSession(null)
+      }
       setProjectTabs(remainingTabs)
-      setSession(null)
       setDirty(false)
       setAllProjectsSummary(null)
-      const nextTab = remainingTabs[0]
-      if (nextTab) {
-        await openSession(() => window.invoiceManager.openRecentProject(nextTab.rootPath))
-      }
     } catch (error) {
       setMessage(`关闭项目失败：${errorMessage(error)}`)
     } finally {
@@ -888,7 +964,7 @@ export default function App() {
                 <path d="M1072.147851 406.226367c-6.331285-33.456782-26.762037-55.073399-52.047135-55.073399-0.323417 0-0.651455 0.003081-0.830105 0.009241l-4.655674 0c-73.124722 0-132.618162-59.491899-132.618162-132.618162 0-23.731152 11.447443-50.336101 11.546009-50.565574 13.104573-29.498767 3.023185-65.672257-23.427755-84.127081l-1.601687-1.127342-134.400039-74.661726-1.700252-0.745401c-8.753836-3.805547-18.334698-5.735272-28.479231-5.735272-20.789593 0-41.235746 8.344174-54.683758 22.306575-14.741683 15.216028-65.622973 58.649474-104.721083 58.649474-39.450789 0-90.633935-44.286652-105.438762-59.784516-13.518857-14.247316-34.128258-22.753199-55.127302-22.753199-9.945862 0-19.354234 1.861961-27.958682 5.531982l-1.746455 0.74078-139.141957 76.431283-1.643269 1.139662c-26.537186 18.437884-36.675557 54.579032-23.584845 84.062398 0.115506 0.264895 11.579891 26.725075 11.579891 50.634877 0 73.126262-59.491899 132.618162-132.618162 132.618162l-4.581749 0c-0.318797-0.00616-0.636055-0.01078-0.951772-0.01078-25.260456 0-45.672728 21.618157-52.002472 55.0811-0.462025 2.453354-11.313456 60.622322-11.313456 106.117939 0 45.494078 10.85143 103.659965 11.314996 106.119479 6.334365 33.458322 26.758957 55.076479 52.036353 55.076479 0.320337 0 0.651455-0.00616 0.842426-0.012321l4.655674 0c73.126262 0 132.618162 59.491899 132.618162 132.616622 0 23.760413-11.444363 50.333021-11.546009 50.565574-13.093793 29.474125-3.041666 65.646075 23.395414 84.151722l1.569346 1.093459 131.838879 73.726895 1.675611 0.7377c8.750757 3.84251 18.305437 5.790715 28.397607 5.790715 21.082208 0 41.676209-8.706094 55.0888-23.290689 18.724339-20.347588 69.527086-62.362616 107.04815-62.362616 40.625872 0 92.72537 47.100385 107.759669 63.583903 13.441852 14.831008 34.176001 23.689571 55.470741 23.695731l0.00616 0c9.895039 0 19.27877-1.883523 27.893999-5.598205l1.711034-0.73924 136.659342-75.531873 1.617088-1.128882c26.492523-18.456365 36.601633-54.600594 23.538642-84.016195-0.115506-0.267974-11.595291-27.082374-11.595291-50.67646 0-73.124722 59.49344-132.616622 132.618162-132.616622l4.517066-0.00154c0.300316 0.00616 0.599092 0.009241 0.899409 0.009241 25.331299-0.00154 45.785153-21.619697 52.107197-55.054918 0.112426-0.589852 11.325776-59.507301 11.325776-106.14104C1083.464388 466.640776 1072.609877 408.67356 1072.147851 406.226367zM377.486862 945.656142l-115.32764-64.487932c5.082277-13.052211 15.437801-43.51815 15.437801-75.017486 0-109.382917-84.176364-199.816642-192.587488-208.134635-2.647404-15.427021-8.873963-54.967133-8.873963-85.667166 0-30.65691 6.223479-70.232445 8.869343-85.671786 108.415744-8.311832 192.592108-98.745557 192.592108-208.134635 0-31.416171-10.300081-61.797405-15.371577-74.854236l122.721583-67.40331c0.003081 0 0.00462 0.00154 0.007701 0.00154 4.423121 4.518606 22.121764 22.080182 46.558275 39.493911 39.929754 28.46229 77.952885 42.894416 113.014434 42.894416 34.716571 0 72.437845-14.151831 112.115025-42.06431 24.282503-17.07953 41.896442-34.302288 46.308782-38.74543 0.009241-0.00154 0.018481-0.00462 0.026182-0.00616l118.301542 65.726159c-5.077657 13.055291-15.416239 43.499669-15.416239 74.958962 0 109.389077 84.174824 199.822802 192.590568 208.134635 2.645865 15.462442 8.872423 55.107281 8.872423 85.671786 0 30.687711-6.223479 70.241685-8.869343 85.673326C890.042174 606.334084 805.86427 696.767809 805.86427 806.158426c0 31.450053 10.317022 61.851309 15.393138 74.903519l-119.783103 66.198965c-5.168521-5.490399-22.603811-23.363073-46.740005-41.288109-40.701336-30.224145-79.662378-45.549521-115.800446-45.549521-35.79155 0-74.458435 15.038919-114.927219 44.694774C400.22004 922.554885 382.666163 940.255068 377.486862 945.656142zM731.271848 511.646647c0-105.803762-86.081448-191.88059-191.888289-191.88059-105.803762 0-191.88059 86.076827-191.88059 191.88059 0 105.803762 86.076827 191.882129 191.88059 191.882129C645.19194 703.528777 731.271848 617.450409 731.271848 511.646647zM539.383558 395.903184c63.825696 0 115.751164 51.922387 115.751164 115.743463 0 63.825696-51.925468 115.751164-115.751164 115.751164-63.821076 0-115.743463-51.925468-115.743463-115.751164C423.640095 447.824031 475.562482 395.903184 539.383558 395.903184z" />
               </svg>
             </button>
-            <Button className="export-button" appearance="primary" disabled={session?.readOnly || busy} onClick={() => setExportDialog(true)}>导出</Button>
+            <Button className="export-button" appearance="primary" disabled={session?.readOnly || busy} onClick={openExportDialog}>导出</Button>
           </div>
         </header>
       )}
@@ -905,7 +981,7 @@ export default function App() {
               <Button appearance="primary" size="large" onClick={requestCreateProject}>新建项目</Button>
               <Button size="large" onClick={() => void openSession(() => window.invoiceManager.openProject())}>从本地打开…</Button>
             </div>
-            <div className="recent-projects">
+            {appSettings.showProjectHistoryOnStartup && <div className="recent-projects">
               <h3>最近项目</h3>
               <div className="recent-project-list">
                 {appSettings.recentProjects.length ? appSettings.recentProjects.map((recentProject) => (
@@ -922,7 +998,7 @@ export default function App() {
                   </Button>
                 )) : <p>暂无最近项目</p>}
               </div>
-            </div>
+            </div>}
           </div>
         </main>
       ) : (

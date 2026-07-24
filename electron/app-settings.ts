@@ -1,4 +1,5 @@
 import { copyFile, open, readFile, rename, rm, mkdir } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import {
   AppSettingsSchema,
@@ -13,6 +14,8 @@ import {
 const MAX_RECENT_PROJECTS = 10
 
 export class AppSettingsStorage {
+  private writeQueue: Promise<void> = Promise.resolve()
+
   constructor(private readonly filePath: string) {}
 
   async read(): Promise<AppSettings> {
@@ -87,6 +90,18 @@ export class AppSettingsStorage {
     await this.write(settings)
 
     // 返回完整的 AppSettings
+    return settings
+  }
+
+  async saveWorkspaceState(openProjectPaths: string[], activeProjectPath: string | null): Promise<AppSettings> {
+    const settings = await this.read()
+    settings.lastOpenProjectPaths = [...new Set(openProjectPaths)].slice(0, MAX_RECENT_PROJECTS)
+    if (activeProjectPath && settings.lastOpenProjectPaths.includes(activeProjectPath)) {
+      settings.lastActiveProjectPath = activeProjectPath
+    } else {
+      delete settings.lastActiveProjectPath
+    }
+    await this.write(settings)
     return settings
   }
 
@@ -234,21 +249,30 @@ export class AppSettingsStorage {
   }
 
   private async write(settings: AppSettings): Promise<void> {
-    await mkdir(path.dirname(this.filePath), { recursive: true })
-    const temporaryPath = `${this.filePath}.tmp`
-    const handle = await open(temporaryPath, 'w')
-    try {
-      await handle.writeFile(`${JSON.stringify(AppSettingsSchema.parse(settings), null, 2)}\n`, 'utf8')
-      await handle.sync()
-    } finally {
-      await handle.close()
-    }
-    try {
-      await rename(temporaryPath, this.filePath)
-    } catch {
-      await rm(this.filePath, { force: true })
-      await rename(temporaryPath, this.filePath)
-    }
-    await copyFile(this.filePath, `${this.filePath}.bak`)
+    const validatedSettings = AppSettingsSchema.parse(settings)
+    const writeOperation = this.writeQueue.then(async () => {
+      await mkdir(path.dirname(this.filePath), { recursive: true })
+      const temporaryPath = `${this.filePath}.${process.pid}-${randomUUID()}.tmp`
+      try {
+        const handle = await open(temporaryPath, 'wx')
+        try {
+          await handle.writeFile(`${JSON.stringify(validatedSettings, null, 2)}\n`, 'utf8')
+          await handle.sync()
+        } finally {
+          await handle.close()
+        }
+        try {
+          await rename(temporaryPath, this.filePath)
+        } catch {
+          await rm(this.filePath, { force: true })
+          await rename(temporaryPath, this.filePath)
+        }
+        await copyFile(this.filePath, `${this.filePath}.bak`)
+      } finally {
+        await rm(temporaryPath, { force: true })
+      }
+    })
+    this.writeQueue = writeOperation.catch(() => undefined)
+    return writeOperation
   }
 }

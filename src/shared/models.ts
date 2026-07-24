@@ -85,6 +85,8 @@ export const AppSettingsSchema = z.object({
   payerNames: PayerNamesSchema.default([]),
   recentProjects: z.array(RecentProjectSchema).default([]),
   knownProjectPaths: z.array(z.string().min(1)).default([]),
+  lastOpenProjectPaths: z.array(z.string().min(1)).default([]),
+  lastActiveProjectPath: z.string().min(1).optional(),
   lastImportDirectories: z.object({
     invoice: z.string().min(1).optional(),
     payment: z.string().min(1).optional(),
@@ -205,6 +207,7 @@ export type AttachmentPreviewSource = OcrAttachmentSource
 export const IPC_CHANNELS = {
   getSettings: 'settings:get',
   saveSettings: 'settings:save',
+  saveWorkspaceState: 'settings:save-workspace-state',
   createProject: 'project:create',
   openProject: 'project:open',
   openRecentProject: 'project:open-recent',
@@ -235,6 +238,7 @@ export const IPC_CHANNELS = {
 export interface InvoiceManagerApi {
   getSettings(): Promise<AppSettings>
   saveSettings(settings: AppSettingsUpdate): Promise<AppSettings>
+  saveWorkspaceState(openProjectPaths: string[], activeProjectPath: string | null): Promise<AppSettings>
   createProject(name: string): Promise<ProjectSession | null>
   openProject(): Promise<ProjectSession | null>
   openRecentProject(rootPath: string): Promise<ProjectSession>

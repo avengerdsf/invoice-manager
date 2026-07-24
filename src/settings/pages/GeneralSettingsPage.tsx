@@ -33,8 +33,8 @@ export function GeneralSettingsPage({ draft, updateDraft }: PageProps) {
           onChange={(checked) => updateDraft({ showProjectHistoryOnStartup: checked } as Partial<GlobalSettingsDraft>)}
         />
         <SettingControl
-          label="自动打开上次项目"
-          description="启动后自动打开最近使用的项目"
+          label="恢复上次打开的项目"
+          description="启动后恢复上次打开的项目标签和当前项目"
           checked={globalDraft.autoOpenLastProject}
           onChange={(checked) => updateDraft({ autoOpenLastProject: checked } as Partial<GlobalSettingsDraft>)}
         />

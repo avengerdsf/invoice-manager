@@ -15,12 +15,26 @@
   ${nsProcess::Unload}
 
   ; CHECK_APP_RUNNING is invoked immediately before the previous version is
-  ; uninstalled. Preserve user data here, only after the old application has
-  ; actually exited. Doing this in customInit is too early: that hook runs as
-  ; soon as Setup opens, before the close-app prompt is shown.
+  ; uninstalled. Copy and verify the settings after the application exits.
+  ; Renaming the whole data directory can silently fail while Windows is still
+  ; releasing a file handle after shutdown.
   IfFileExists "$INSTDIR\data\settings.json" 0 preserveDataAfterCloseDone
+  RMDir /r "$INSTDIR.__update-data-new"
+  CreateDirectory "$INSTDIR.__update-data-new"
+  ClearErrors
+  CopyFiles /SILENT "$INSTDIR\data\settings.json" "$INSTDIR.__update-data-new\settings.json"
+  IfErrors preserveDataFailed
+  IfFileExists "$INSTDIR.__update-data-new\settings.json" 0 preserveDataFailed
+  IfFileExists "$INSTDIR\data\settings.json.bak" 0 preserveDataReady
+  CopyFiles /SILENT "$INSTDIR\data\settings.json.bak" "$INSTDIR.__update-data-new\settings.json.bak"
+  preserveDataReady:
   RMDir /r "$INSTDIR.__update-data"
-  Rename "$INSTDIR\data" "$INSTDIR.__update-data"
+  Rename "$INSTDIR.__update-data-new" "$INSTDIR.__update-data"
+  IfFileExists "$INSTDIR.__update-data\settings.json" preserveDataAfterCloseDone 0
+  preserveDataFailed:
+  RMDir /r "$INSTDIR.__update-data-new"
+  MessageBox MB_RETRYCANCEL|MB_ICONSTOP "无法备份应用设置。请稍后重试；在设置成功备份前不会继续安装。" /SD IDCANCEL IDRETRY checkInvoiceManagerRunning
+  Quit
   preserveDataAfterCloseDone:
 !macroend
 
@@ -30,20 +44,16 @@
 
   !macro customInstall
     IfFileExists "$INSTDIR.__update-data\settings.json" 0 restoreDataDone
-    ; Never delete the newly-created data directory before the preserved data
-    ; has been restored successfully. Keep it aside so a failed Rename can be
-    ; rolled back instead of starting the application with empty settings.
-    RMDir /r "$INSTDIR.__new-data"
-    IfFileExists "$INSTDIR\data\*.*" 0 restorePreservedData
-    Rename "$INSTDIR\data" "$INSTDIR.__new-data"
-    restorePreservedData:
-    Rename "$INSTDIR.__update-data" "$INSTDIR\data"
+    CreateDirectory "$INSTDIR\data"
+    CopyFiles /SILENT "$INSTDIR.__update-data\settings.json" "$INSTDIR\data\settings.json"
+    IfFileExists "$INSTDIR.__update-data\settings.json.bak" 0 verifyRestoredData
+    CopyFiles /SILENT "$INSTDIR.__update-data\settings.json.bak" "$INSTDIR\data\settings.json.bak"
+    verifyRestoredData:
     IfFileExists "$INSTDIR\data\settings.json" restoreDataSucceeded 0
-    IfFileExists "$INSTDIR.__new-data\*.*" 0 restoreDataDone
-    Rename "$INSTDIR.__new-data" "$INSTDIR\data"
+    MessageBox MB_ICONSTOP|MB_OK "应用已安装，但设置恢复失败。备份仍保留在 $INSTDIR.__update-data。"
     Goto restoreDataDone
     restoreDataSucceeded:
-    RMDir /r "$INSTDIR.__new-data"
+    RMDir /r "$INSTDIR.__update-data"
     restoreDataDone:
   !macroend
 

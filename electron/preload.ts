@@ -11,6 +11,7 @@ import type {
 const IPC_CHANNELS = {
   getSettings: 'settings:get',
   saveSettings: 'settings:save',
+  saveWorkspaceState: 'settings:save-workspace-state',
   createProject: 'project:create',
   openProject: 'project:open',
   openRecentProject: 'project:open-recent',
@@ -41,6 +42,9 @@ const IPC_CHANNELS = {
 const api: InvoiceManagerApi = {
   getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.getSettings),
   saveSettings: (settings: AppSettingsUpdate) => ipcRenderer.invoke(IPC_CHANNELS.saveSettings, settings),
+  saveWorkspaceState: (openProjectPaths: string[], activeProjectPath: string | null) => (
+    ipcRenderer.invoke(IPC_CHANNELS.saveWorkspaceState, openProjectPaths, activeProjectPath)
+  ),
   createProject: (name: string) => ipcRenderer.invoke(IPC_CHANNELS.createProject, name),
   openProject: () => ipcRenderer.invoke(IPC_CHANNELS.openProject),
   openRecentProject: (rootPath: string) => ipcRenderer.invoke(IPC_CHANNELS.openRecentProject, rootPath),
