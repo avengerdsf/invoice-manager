@@ -1,6 +1,7 @@
 import { copyFile, open, readFile, rename, rm, mkdir } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
+import { safeStorage } from 'electron'
 import {
   AppSettingsSchema,
   AppSettingsUpdateSchema,
@@ -47,6 +48,17 @@ export class AppSettingsStorage {
     if (update.showProjectHistoryOnStartup !== undefined) settings.showProjectHistoryOnStartup = update.showProjectHistoryOnStartup
     if (update.autoOpenLastProject !== undefined) settings.autoOpenLastProject = update.autoOpenLastProject
     if (update.showSuccessMessages !== undefined) settings.showSuccessMessages = update.showSuccessMessages
+    if (update.syncWebdav) {
+      settings.syncWebdav.enabled = update.syncWebdav.enabled ?? settings.syncWebdav.enabled
+      if (update.syncWebdav.url !== undefined) settings.syncWebdav.url = update.syncWebdav.url
+      if (update.syncWebdav.username !== undefined) settings.syncWebdav.username = update.syncWebdav.username
+      if (update.syncWebdav.remoteDirectory !== undefined) settings.syncWebdav.remoteDirectory = update.syncWebdav.remoteDirectory
+      if (update.syncWebdav.clearPassword || update.syncWebdav.password === null) {
+        delete settings.syncWebdav.encryptedPassword
+      } else if (typeof update.syncWebdav.password === 'string' && update.syncWebdav.password.length > 0) {
+        settings.syncWebdav.encryptedPassword = this.encryptPassword(update.syncWebdav.password)
+      }
+    }
 
     // 将路径载荷中的 null 转换为删除属性
     if (update.lastProjectParentDirectory === null) {
@@ -91,6 +103,37 @@ export class AppSettingsStorage {
 
     // 返回完整的 AppSettings
     return settings
+  }
+
+  async readWebdavConfig(override?: {
+    enabled?: boolean
+    url?: string
+    username?: string
+    remoteDirectory?: string
+    password?: string | null
+    clearPassword?: boolean
+  }): Promise<{
+    enabled: boolean
+    url: string
+    username: string
+    remoteDirectory: string
+    password: string
+  }> {
+    const settings = await this.read()
+    const password = typeof override?.password === 'string' && override.password.length > 0
+      ? override.password
+      : override?.clearPassword || override?.password === null
+        ? ''
+        : settings.syncWebdav.encryptedPassword
+          ? this.decryptPassword(settings.syncWebdav.encryptedPassword)
+          : ''
+    return {
+      enabled: override?.enabled ?? settings.syncWebdav.enabled,
+      url: override?.url ?? settings.syncWebdav.url,
+      username: override?.username ?? settings.syncWebdav.username,
+      remoteDirectory: override?.remoteDirectory ?? settings.syncWebdav.remoteDirectory,
+      password,
+    }
   }
 
   async saveWorkspaceState(openProjectPaths: string[], activeProjectPath: string | null): Promise<AppSettings> {
@@ -274,5 +317,19 @@ export class AppSettingsStorage {
     })
     this.writeQueue = writeOperation.catch(() => undefined)
     return writeOperation
+  }
+
+  private encryptPassword(password: string): string {
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error('当前系统不可用 Electron 安全存储，无法保存 WebDAV 密码')
+    }
+    return safeStorage.encryptString(password).toString('base64')
+  }
+
+  private decryptPassword(encryptedPassword: string): string {
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error('当前系统不可用 Electron 安全存储，无法读取 WebDAV 密码')
+    }
+    return safeStorage.decryptString(Buffer.from(encryptedPassword, 'base64'))
   }
 }

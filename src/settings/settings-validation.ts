@@ -9,6 +9,13 @@ export function normalizeGlobalDraft(draft: GlobalSettingsDraft): GlobalSettings
   return {
     ...draft,
     payerNames: draft.payerNames.map((name) => name.trim()).filter((name) => name.length > 0),
+    syncWebdav: {
+      ...draft.syncWebdav,
+      url: draft.syncWebdav.url.trim() || 'https://dav.jianguoyun.com/dav/',
+      username: draft.syncWebdav.username.trim(),
+      remoteDirectory: draft.syncWebdav.remoteDirectory.trim() || '/InvoiceManager/',
+      password: draft.syncWebdav.password,
+    },
     lastImportDirectories: {
       invoice: draft.lastImportDirectories.invoice?.trim() || null,
       payment: draft.lastImportDirectories.payment?.trim() || null,
@@ -51,6 +58,11 @@ export function isGlobalDirty(draft: GlobalSettingsDraft, settings: AppSettings)
   if (normalized.showProjectHistoryOnStartup !== settings.showProjectHistoryOnStartup) return true
   if (normalized.autoOpenLastProject !== settings.autoOpenLastProject) return true
   if (normalized.showSuccessMessages !== settings.showSuccessMessages) return true
+  if (normalized.syncWebdav.enabled !== settings.syncWebdav.enabled) return true
+  if (normalized.syncWebdav.url !== settings.syncWebdav.url) return true
+  if (normalized.syncWebdav.username !== settings.syncWebdav.username) return true
+  if (normalized.syncWebdav.remoteDirectory !== settings.syncWebdav.remoteDirectory) return true
+  if (normalized.syncWebdav.password.length > 0 || normalized.syncWebdav.clearPassword) return true
 
   // 比较目录（null 和 undefined 视为相同）
   const normalizePath = (path: string | null | undefined): string | null => path || null
@@ -144,6 +156,15 @@ export function createDefaultGlobalDraft(settings: AppSettings): GlobalSettingsD
     showProjectHistoryOnStartup: settings.showProjectHistoryOnStartup,
     autoOpenLastProject: settings.autoOpenLastProject,
     showSuccessMessages: settings.showSuccessMessages,
+    syncWebdav: {
+      enabled: settings.syncWebdav.enabled,
+      url: settings.syncWebdav.url,
+      username: settings.syncWebdav.username,
+      remoteDirectory: settings.syncWebdav.remoteDirectory,
+      password: '',
+      passwordConfigured: Boolean(settings.syncWebdav.encryptedPassword),
+      clearPassword: false,
+    },
     lastProjectParentDirectory: settings.lastProjectParentDirectory || null,
     lastOpenProjectDirectory: settings.lastOpenProjectDirectory || null,
     lastExportDirectory: settings.lastExportDirectory || null,

@@ -4,6 +4,7 @@ export type SettingsPage =
   | 'general'
   | 'payers'
   | 'projectHistory'
+  | 'sync'
   | 'about'
   | 'categories'
   | 'projectLocation'
@@ -16,6 +17,15 @@ export interface GlobalSettingsDraft {
   showProjectHistoryOnStartup: boolean
   autoOpenLastProject: boolean
   showSuccessMessages: boolean
+  syncWebdav: {
+    enabled: boolean
+    url: string
+    username: string
+    remoteDirectory: string
+    password: string
+    passwordConfigured: boolean
+    clearPassword: boolean
+  }
   lastProjectParentDirectory: string | null
   lastOpenProjectDirectory: string | null
   lastExportDirectory: string | null

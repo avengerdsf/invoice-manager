@@ -17,8 +17,9 @@ import { ProjectHistoryPage } from './pages/ProjectHistoryPage'
 import { AboutPage } from './pages/AboutPage'
 import { ProjectCategoriesPage } from './pages/ProjectCategoriesPage'
 import { ProjectLocationPage } from './pages/ProjectLocationPage'
+import { SyncSettingsPage } from './pages/SyncSettingsPage'
 
-const GLOBAL_PAGES: SettingsPage[] = ['general', 'payers', 'projectHistory', 'about']
+const GLOBAL_PAGES: SettingsPage[] = ['general', 'payers', 'projectHistory', 'sync', 'about']
 const PROJECT_PAGES: SettingsPage[] = ['projectLocation', 'categories']
 
 export function SettingsDialog({
@@ -146,6 +147,8 @@ export function SettingsDialog({
         return <PayerSettingsPage {...commonProps} />
       case 'projectHistory':
         return <ProjectHistoryPage {...commonProps} />
+      case 'sync':
+        return <SyncSettingsPage {...commonProps} />
       case 'about':
         return <AboutPage {...commonProps} />
       case 'categories':

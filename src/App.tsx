@@ -18,7 +18,7 @@ import appIconUrl from '../build/app-icon.png'
 import { calculateProjectSummary, createExpense, expenseTotalCents, formatMoney } from './domain/project'
 import { recognizeInvoiceAmounts } from './ocr/ocr-client'
 import type { InvoiceAmounts } from './ocr/amount'
-import type { Allocation, AllProjectsFundsSummary, AppSettings, Attachment, AttachmentKind, ExpenseItem, Project, ProjectSession } from './shared/models'
+import type { Allocation, AllProjectsFundsSummary, AppSettings, Attachment, AttachmentKind, ExpenseItem, Project, ProjectSession, WebdavSyncProgress, WebdavSyncStatus } from './shared/models'
 import type {
   GlobalSettingsDraft,
   ProjectSettingsDraft,
@@ -43,12 +43,17 @@ type RemovalRequest =
   | { kind: 'attachment'; expenseId: string; attachmentKind: AttachmentKind; attachmentId: string }
 
 type ViewMode = 'table' | 'card'
-type ToolbarMenu = 'add'
+type ToolbarMenu = 'add' | 'sync'
 const ATTACHMENT_KINDS: AttachmentKind[] = ['invoice', 'payment', 'other']
 
 interface OcrOverwriteRequest {
   current: InvoiceAmounts
   recognized: InvoiceAmounts
+}
+
+interface SyncDialogState {
+  status: WebdavSyncStatus
+  confirmAction: 'upload' | 'download' | null
 }
 
 export default function App() {
@@ -73,6 +78,9 @@ export default function App() {
   const [attachmentPreview, setAttachmentPreview] = useState<{ id: string; name: string; mimeType: string; url: string } | null>(null)
   const [removalRequest, setRemovalRequest] = useState<RemovalRequest | null>(null)
   const [ocrOverwriteRequest, setOcrOverwriteRequest] = useState<OcrOverwriteRequest | null>(null)
+  const [syncDialog, setSyncDialog] = useState<SyncDialogState | null>(null)
+  const [syncActionBusy, setSyncActionBusy] = useState(false)
+  const [syncProgress, setSyncProgress] = useState<WebdavSyncProgress | null>(null)
   const [message, setMessage] = useState('')
   const [appSettings, setAppSettings] = useState<AppSettings>({
     payerNames: [],
@@ -86,6 +94,12 @@ export default function App() {
     showProjectHistoryOnStartup: true,
     autoOpenLastProject: false,
     showSuccessMessages: true,
+    syncWebdav: {
+      enabled: false,
+      url: 'https://dav.jianguoyun.com/dav/',
+      username: '',
+      remoteDirectory: '/InvoiceManager/',
+    },
   })
   const [projectNameDialog, setProjectNameDialog] = useState<string | null>(null)
   const [missingRecentProject, setMissingRecentProject] = useState<{ name: string; rootPath: string } | null>(null)
@@ -93,6 +107,7 @@ export default function App() {
   const startupProjectAttempted = useRef(false)
   const workspaceRestoreFinished = useRef(false)
   const [settingsCenterOpen, setSettingsCenterOpen] = useState(false)
+  const [startEntered, setStartEntered] = useState(false)
   const saving = useRef(false)
   const projectAddButtonRef = useRef<HTMLButtonElement | null>(null)
   const projectTabsRef = useRef<HTMLDivElement | null>(null)
@@ -108,6 +123,7 @@ export default function App() {
   } | null>(null)
   const suppressFloatingAddClick = useRef(false)
   const lastAttachmentDialog = useRef<{ expenseId: string; kind: AttachmentKind } | null>(null)
+  const lastSyncDialog = useRef<SyncDialogState | null>(null)
   const ocrOverwriteResolver = useRef<((overwrite: boolean) => void) | null>(null)
   const [floatingAddPosition, setFloatingAddPosition] = useState<{ x: number; y: number } | null>(null)
   const [projectAddMenuPosition, setProjectAddMenuPosition] = useState<{ left: number; top: number } | null>(null)
@@ -116,8 +132,18 @@ export default function App() {
 
   const project = session?.project ?? null
   const readOnly = session?.readOnly ?? true
+  const showWorkspaceShell = Boolean(project || startEntered)
+  const webdavSyncAvailable = Boolean(
+    appSettings.syncWebdav.enabled
+    && appSettings.syncWebdav.url
+    && appSettings.syncWebdav.username
+    && appSettings.syncWebdav.remoteDirectory
+    && appSettings.syncWebdav.encryptedPassword,
+  )
   if (attachmentDialog) lastAttachmentDialog.current = attachmentDialog
+  if (syncDialog) lastSyncDialog.current = syncDialog
   const renderedAttachmentDialog = attachmentDialog ?? lastAttachmentDialog.current
+  const renderedSyncDialog = syncDialog ?? lastSyncDialog.current
   const summary = useMemo(() => (project ? calculateProjectSummary(project) : null), [project])
   const editingExpense = useMemo(() => (
     project && editingExpenseId ? project.expenses.find((expense) => expense.id === editingExpenseId) ?? null : null
@@ -237,6 +263,14 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    if (!window.invoiceManager?.onWebdavSyncProgress) return
+    return window.invoiceManager.onWebdavSyncProgress((progress) => {
+      if (progress.action === 'status') return
+      setSyncProgress(progress)
+    })
+  }, [])
+
+  useEffect(() => {
     if (!workspaceRestoreFinished.current || !window.invoiceManager) return
     const paths = openProjectPathKey ? openProjectPathKey.split('\n') : []
     void window.invoiceManager.saveWorkspaceState(paths, session?.rootPath ?? null)
@@ -317,6 +351,7 @@ export default function App() {
       changeVersion.current = 0
       setDirty(false)
       setSession(opened)
+      setStartEntered(true)
       let settings = await window.invoiceManager.getSettings()
       const projectPayerNames = [...new Set(
         opened.project.expenses
@@ -333,6 +368,12 @@ export default function App() {
           showProjectHistoryOnStartup: settings.showProjectHistoryOnStartup,
           autoOpenLastProject: settings.autoOpenLastProject,
           showSuccessMessages: settings.showSuccessMessages,
+          syncWebdav: {
+            enabled: settings.syncWebdav.enabled,
+            url: settings.syncWebdav.url,
+            username: settings.syncWebdav.username,
+            remoteDirectory: settings.syncWebdav.remoteDirectory,
+          },
           lastProjectParentDirectory: settings.lastProjectParentDirectory ?? null,
           lastOpenProjectDirectory: settings.lastOpenProjectDirectory ?? null,
           lastExportDirectory: settings.lastExportDirectory ?? null,
@@ -391,6 +432,7 @@ export default function App() {
       }
     }))
     setSession(restoredSessions.get(restoredActivePath)!)
+    setStartEntered(true)
     setAppSettings(await window.invoiceManager.getSettings())
   }
 
@@ -464,6 +506,14 @@ export default function App() {
         showProjectHistoryOnStartup: globalDraft.showProjectHistoryOnStartup,
         autoOpenLastProject: globalDraft.autoOpenLastProject,
         showSuccessMessages: globalDraft.showSuccessMessages,
+        syncWebdav: {
+          enabled: globalDraft.syncWebdav.enabled,
+          url: globalDraft.syncWebdav.url,
+          username: globalDraft.syncWebdav.username,
+          remoteDirectory: globalDraft.syncWebdav.remoteDirectory,
+          password: globalDraft.syncWebdav.password || undefined,
+          clearPassword: globalDraft.syncWebdav.clearPassword,
+        },
         lastProjectParentDirectory: globalDraft.lastProjectParentDirectory,
         lastOpenProjectDirectory: globalDraft.lastOpenProjectDirectory,
         lastExportDirectory: globalDraft.lastExportDirectory,
@@ -702,6 +752,114 @@ export default function App() {
     setExportDialog(true)
   }
 
+  const importSyncPackage = async () => {
+    setOpenToolbarMenu(null)
+    setBusy(true)
+    try {
+      if (dirty && !(await save())) return
+      const result = await window.invoiceManager.importSyncPackage()
+      if (!result) return
+      setSession(result.session)
+      setStartEntered(true)
+      setAppSettings(result.settings)
+      setDirty(false)
+      setAllProjectsSummary(null)
+      showSuccessMessage(`已导入项目同步包：${result.summary.projectName}`)
+    } catch (error) {
+      setMessage(`导入同步包失败：${errorMessage(error)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const exportSyncPackage = async () => {
+    if (!project || session?.readOnly) return
+    setOpenToolbarMenu(null)
+    setBusy(true)
+    try {
+      if (dirty && !(await save())) return
+      const result = await window.invoiceManager.exportSyncPackage(project)
+      if (!result) return
+      setSession((current) => (current ? { ...current, project: result.project } : current))
+      setDirty(false)
+      showSuccessMessage(`同步包已导出：${result.filePath}`)
+    } catch (error) {
+      setMessage(`导出同步包失败：${errorMessage(error)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const syncWithWebdav = async () => {
+    if (!project || session?.readOnly) return
+    setOpenToolbarMenu(null)
+    setBusy(true)
+    try {
+      if (dirty && !(await save())) return
+      const result = await window.invoiceManager.getWebdavSyncStatus(project)
+      setSyncDialog({ status: result.status, confirmAction: null })
+    } catch (error) {
+      setMessage(`坚果云同步失败：${errorMessage(error)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const closeSyncDialog = () => {
+    if (syncActionBusy) return
+    setSyncDialog(null)
+    setSyncProgress(null)
+  }
+
+  const cancelSyncDialog = () => {
+    if (syncActionBusy) return
+    setSyncDialog(null)
+    setSyncProgress(null)
+    setMessage('已取消同步')
+  }
+
+  const requestSyncAction = (action: 'upload' | 'download') => {
+    if (!syncDialog) return
+    const needsConfirm = action === 'upload'
+      ? syncDialog.status.state === 'remote-newer' || syncDialog.status.conflict
+      : syncDialog.status.state === 'local-newer' || syncDialog.status.conflict
+    if (needsConfirm && syncDialog.confirmAction !== action) {
+      setSyncDialog({ ...syncDialog, confirmAction: action })
+      return
+    }
+    void runSyncAction(action, needsConfirm)
+  }
+
+  const runSyncAction = async (action: 'upload' | 'download', force: boolean) => {
+    if (!project) return
+    setSyncActionBusy(true)
+    setSyncProgress({
+      action,
+      phase: 'start',
+      current: 0,
+      total: 1,
+      message: action === 'upload' ? '正在准备上传' : '正在准备下载',
+    })
+    try {
+      const result = action === 'upload'
+        ? await window.invoiceManager.uploadCurrentProjectWebdav(project, force)
+        : await window.invoiceManager.downloadCurrentProjectWebdav(project, force)
+      if (result.session) {
+        setSession(result.session)
+        setDirty(false)
+      }
+      if (result.settings) setAppSettings(result.settings)
+      setSyncDialog(null)
+      setSyncProgress(null)
+      showSuccessMessage(action === 'upload' ? '已上传当前项目到坚果云' : '已从坚果云下载当前项目')
+    } catch (error) {
+      setSyncProgress(null)
+      setMessage(`坚果云同步失败：${errorMessage(error)}`)
+    } finally {
+      setSyncActionBusy(false)
+    }
+  }
+
   const closeProjectTab = async (rootPath: string) => {
     const isActive = session?.rootPath === rootPath
     const closedTabIndex = projectTabs.findIndex((item) => item.rootPath === rootPath)
@@ -790,7 +948,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      {project && (
+      {showWorkspaceShell && (
         <header className="topbar">
           <div className="toolbar">
             <div className={`project-tabs-shell${tabScrollState.canScrollLeft ? ' can-scroll-left' : ''}${tabScrollState.canScrollRight ? ' can-scroll-right' : ''}`}>
@@ -964,22 +1122,45 @@ export default function App() {
                 <path d="M1072.147851 406.226367c-6.331285-33.456782-26.762037-55.073399-52.047135-55.073399-0.323417 0-0.651455 0.003081-0.830105 0.009241l-4.655674 0c-73.124722 0-132.618162-59.491899-132.618162-132.618162 0-23.731152 11.447443-50.336101 11.546009-50.565574 13.104573-29.498767 3.023185-65.672257-23.427755-84.127081l-1.601687-1.127342-134.400039-74.661726-1.700252-0.745401c-8.753836-3.805547-18.334698-5.735272-28.479231-5.735272-20.789593 0-41.235746 8.344174-54.683758 22.306575-14.741683 15.216028-65.622973 58.649474-104.721083 58.649474-39.450789 0-90.633935-44.286652-105.438762-59.784516-13.518857-14.247316-34.128258-22.753199-55.127302-22.753199-9.945862 0-19.354234 1.861961-27.958682 5.531982l-1.746455 0.74078-139.141957 76.431283-1.643269 1.139662c-26.537186 18.437884-36.675557 54.579032-23.584845 84.062398 0.115506 0.264895 11.579891 26.725075 11.579891 50.634877 0 73.126262-59.491899 132.618162-132.618162 132.618162l-4.581749 0c-0.318797-0.00616-0.636055-0.01078-0.951772-0.01078-25.260456 0-45.672728 21.618157-52.002472 55.0811-0.462025 2.453354-11.313456 60.622322-11.313456 106.117939 0 45.494078 10.85143 103.659965 11.314996 106.119479 6.334365 33.458322 26.758957 55.076479 52.036353 55.076479 0.320337 0 0.651455-0.00616 0.842426-0.012321l4.655674 0c73.126262 0 132.618162 59.491899 132.618162 132.616622 0 23.760413-11.444363 50.333021-11.546009 50.565574-13.093793 29.474125-3.041666 65.646075 23.395414 84.151722l1.569346 1.093459 131.838879 73.726895 1.675611 0.7377c8.750757 3.84251 18.305437 5.790715 28.397607 5.790715 21.082208 0 41.676209-8.706094 55.0888-23.290689 18.724339-20.347588 69.527086-62.362616 107.04815-62.362616 40.625872 0 92.72537 47.100385 107.759669 63.583903 13.441852 14.831008 34.176001 23.689571 55.470741 23.695731l0.00616 0c9.895039 0 19.27877-1.883523 27.893999-5.598205l1.711034-0.73924 136.659342-75.531873 1.617088-1.128882c26.492523-18.456365 36.601633-54.600594 23.538642-84.016195-0.115506-0.267974-11.595291-27.082374-11.595291-50.67646 0-73.124722 59.49344-132.616622 132.618162-132.616622l4.517066-0.00154c0.300316 0.00616 0.599092 0.009241 0.899409 0.009241 25.331299-0.00154 45.785153-21.619697 52.107197-55.054918 0.112426-0.589852 11.325776-59.507301 11.325776-106.14104C1083.464388 466.640776 1072.609877 408.67356 1072.147851 406.226367zM377.486862 945.656142l-115.32764-64.487932c5.082277-13.052211 15.437801-43.51815 15.437801-75.017486 0-109.382917-84.176364-199.816642-192.587488-208.134635-2.647404-15.427021-8.873963-54.967133-8.873963-85.667166 0-30.65691 6.223479-70.232445 8.869343-85.671786 108.415744-8.311832 192.592108-98.745557 192.592108-208.134635 0-31.416171-10.300081-61.797405-15.371577-74.854236l122.721583-67.40331c0.003081 0 0.00462 0.00154 0.007701 0.00154 4.423121 4.518606 22.121764 22.080182 46.558275 39.493911 39.929754 28.46229 77.952885 42.894416 113.014434 42.894416 34.716571 0 72.437845-14.151831 112.115025-42.06431 24.282503-17.07953 41.896442-34.302288 46.308782-38.74543 0.009241-0.00154 0.018481-0.00462 0.026182-0.00616l118.301542 65.726159c-5.077657 13.055291-15.416239 43.499669-15.416239 74.958962 0 109.389077 84.174824 199.822802 192.590568 208.134635 2.645865 15.462442 8.872423 55.107281 8.872423 85.671786 0 30.687711-6.223479 70.241685-8.869343 85.673326C890.042174 606.334084 805.86427 696.767809 805.86427 806.158426c0 31.450053 10.317022 61.851309 15.393138 74.903519l-119.783103 66.198965c-5.168521-5.490399-22.603811-23.363073-46.740005-41.288109-40.701336-30.224145-79.662378-45.549521-115.800446-45.549521-35.79155 0-74.458435 15.038919-114.927219 44.694774C400.22004 922.554885 382.666163 940.255068 377.486862 945.656142zM731.271848 511.646647c0-105.803762-86.081448-191.88059-191.888289-191.88059-105.803762 0-191.88059 86.076827-191.88059 191.88059 0 105.803762 86.076827 191.882129 191.88059 191.882129C645.19194 703.528777 731.271848 617.450409 731.271848 511.646647zM539.383558 395.903184c63.825696 0 115.751164 51.922387 115.751164 115.743463 0 63.825696-51.925468 115.751164-115.751164 115.751164-63.821076 0-115.743463-51.925468-115.743463-115.751164C423.640095 447.824031 475.562482 395.903184 539.383558 395.903184z" />
               </svg>
             </button>
-            <Button className="export-button" appearance="primary" disabled={session?.readOnly || busy} onClick={openExportDialog}>导出</Button>
+            <div className="toolbar-menu-wrap">
+              <Button
+                className="sync-button"
+                disabled={busy}
+                onClick={() => setOpenToolbarMenu(openToolbarMenu === 'sync' ? null : 'sync')}
+              >
+                同步
+              </Button>
+              {openToolbarMenu === 'sync' && (
+                <div className="toolbar-menu">
+                  <button type="button" onClick={() => void importSyncPackage()}>
+                    从文件导入项目
+                  </button>
+                  <button type="button" disabled={!project || readOnly} onClick={() => void exportSyncPackage()}>
+                    导出项目同步包
+                  </button>
+                  {webdavSyncAvailable && (
+                    <button type="button" disabled={!project || readOnly} onClick={() => void syncWithWebdav()}>
+                      与坚果云同步
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+            <Button className="export-button" appearance="primary" disabled={!project || session?.readOnly || busy} onClick={openExportDialog}>导出</Button>
           </div>
         </header>
       )}
 
-      {(busy || message) && <div className={`app-message ${project ? 'below-topbar' : ''}`}>{busy && <Spinner size="tiny" />} {message}</div>}
+      {(busy || message) && <div className={`app-message ${showWorkspaceShell ? 'below-topbar' : ''}`}>{busy && <Spinner size="tiny" />} {message}</div>}
 
-      {!project ? (
+      {!project && !startEntered ? (
         <main className="welcome">
           <div className="welcome-card">
             <div className="welcome-icon"><img src={appIconUrl} alt="" /></div>
-            <h2>开始</h2>
-            <p>建立或打开一个报销项目</p>
+            <h2>欢迎回来</h2>
+            <p>整理发票、支付截图和报销明细</p>
             <div className="welcome-actions">
-              <Button appearance="primary" size="large" onClick={requestCreateProject}>新建项目</Button>
-              <Button size="large" onClick={() => void openSession(() => window.invoiceManager.openProject())}>从本地打开…</Button>
+              <Button appearance="primary" size="large" onClick={() => setStartEntered(true)}>进入</Button>
             </div>
             {appSettings.showProjectHistoryOnStartup && <div className="recent-projects">
               <h3>最近项目</h3>
@@ -999,6 +1180,14 @@ export default function App() {
                 )) : <p>暂无最近项目</p>}
               </div>
             </div>}
+          </div>
+        </main>
+      ) : !project ? (
+        <main className="welcome">
+          <div className="welcome-card">
+            <div className="welcome-icon"><img src={appIconUrl} alt="" /></div>
+            <h2>工作区</h2>
+            <p>请选择一个项目继续</p>
           </div>
         </main>
       ) : (
@@ -1626,6 +1815,79 @@ export default function App() {
           </DialogBody>
         </DialogSurface>
       </Dialog>
+      <Dialog open={syncDialog !== null} onOpenChange={(_event, data) => !data.open && closeSyncDialog()}>
+        <DialogSurface className="sync-dialog">
+          <DialogBody>
+            <DialogTitle>
+              <div className="sync-dialog-title">
+                <span>与坚果云同步</span>
+                <small>{project?.name}</small>
+              </div>
+            </DialogTitle>
+            <DialogContent>
+              {renderedSyncDialog && (
+                <div className="sync-dialog-content">
+                  <div className={`sync-state-banner ${renderedSyncDialog.status.state}`}>
+                    <strong>{syncStateLabel(renderedSyncDialog.status)}</strong>
+                    <span>{syncStateDescription(renderedSyncDialog.status)}</span>
+                  </div>
+                  <div className="sync-status-grid">
+                    <SyncStatusItem label="本地 revision" value={String(renderedSyncDialog.status.localRevision)} />
+                    <SyncStatusItem label="本地更新时间" value={formatSyncDate(renderedSyncDialog.status.localUpdatedAt)} />
+                    <SyncStatusItem label="远端 revision" value={renderedSyncDialog.status.remoteExists ? String(renderedSyncDialog.status.remoteRevision) : '不存在'} />
+                    <SyncStatusItem label="远端更新时间" value={renderedSyncDialog.status.remoteUpdatedAt ? formatSyncDate(renderedSyncDialog.status.remoteUpdatedAt) : '不存在'} />
+                    <SyncStatusItem label="本地上传状态" value={localUploadStatusText(renderedSyncDialog.status)} tone={renderedSyncDialog.status.localHasUnuploadedChanges ? 'warning' : 'normal'} />
+                    <SyncStatusItem label="远端下载状态" value={remoteDownloadStatusText(renderedSyncDialog.status)} tone={renderedSyncDialog.status.remoteHasUndownloadedChanges ? 'warning' : 'normal'} />
+                  </div>
+                  {syncActionBusy && syncProgress && (
+                    <div className="sync-progress-panel" role="status" aria-live="polite">
+                      <div className="sync-progress-head">
+                        <span>{syncProgress.message}</span>
+                        <strong>{syncProgressPercent(syncProgress)}%</strong>
+                      </div>
+                      <div className="sync-progress-track">
+                        <span style={{ width: `${syncProgressPercent(syncProgress)}%` }} />
+                      </div>
+                    </div>
+                  )}
+                  {renderedSyncDialog.confirmAction && (
+                    <div className="sync-confirm-panel">
+                      <strong>{renderedSyncDialog.confirmAction === 'upload' ? '确认上传覆盖远端？' : '确认下载覆盖本地？'}</strong>
+                      <span>
+                        {renderedSyncDialog.confirmAction === 'upload'
+                          ? '远端较新或存在冲突，继续上传会以当前项目替换远端正式版本。'
+                          : '本地较新或存在冲突，继续下载会先自动备份，再用远端版本覆盖当前项目。'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </DialogContent>
+            <DialogActions>
+              {renderedSyncDialog?.confirmAction ? (
+                <>
+                  <Button disabled={syncActionBusy} onClick={() => setSyncDialog({ ...renderedSyncDialog, confirmAction: null })}>返回</Button>
+                  <Button appearance="primary" disabled={syncActionBusy} onClick={() => runSyncAction(renderedSyncDialog.confirmAction!, true)}>
+                    {syncActionBusy ? '处理中...' : renderedSyncDialog.confirmAction === 'upload' ? '继续上传' : '继续下载'}
+                  </Button>
+                </>
+              ) : renderedSyncDialog?.status.state === 'latest' ? (
+                <Button appearance="primary" disabled={syncActionBusy} onClick={closeSyncDialog}>关闭</Button>
+              ) : (
+                <>
+                  <Button disabled={syncActionBusy} onClick={cancelSyncDialog}>取消</Button>
+                  {renderedSyncDialog?.status.remoteExists && (
+                    <Button disabled={syncActionBusy} onClick={() => requestSyncAction('download')}>从坚果云下载到当前项目</Button>
+                  )}
+                  <Button appearance="primary" disabled={syncActionBusy} onClick={() => requestSyncAction('upload')}>
+                    上传当前项目到坚果云
+                  </Button>
+                </>
+              )}
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
       <SettingsDialog
         isOpen={settingsCenterOpen}
         onClose={() => setSettingsCenterOpen(false)}
@@ -1639,6 +1901,53 @@ export default function App() {
         }}
         onAppSettingsChange={setAppSettings}
       />
+    </div>
+  )
+}
+
+function syncStateLabel(status: WebdavSyncStatus): string {
+  if (status.state === 'remote-missing') return '远端不存在'
+  if (status.state === 'latest') return '已是最新'
+  if (status.state === 'local-newer') return '本地较新'
+  if (status.state === 'remote-newer') return '远端较新'
+  return '存在冲突'
+}
+
+function syncStateDescription(status: WebdavSyncStatus): string {
+  if (status.state === 'remote-missing') return '坚果云上还没有这个项目，可以上传当前项目创建远端版本。'
+  if (status.state === 'latest') return '本地和坚果云上的项目 revision 与校验和一致。'
+  if (status.state === 'local-newer') return '本地 revision 更高，可以上传当前项目。'
+  if (status.state === 'remote-newer') return '远端 revision 更高，可以下载远端项目。'
+  return 'revision 相同但校验和不同，需要选择上传或下载，不会自动合并。'
+}
+
+function formatSyncDate(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+}
+
+function localUploadStatusText(status: WebdavSyncStatus): string {
+  if (!status.remoteExists) return '待首次上传'
+  if (status.localHasUnuploadedChanges) return status.conflict ? '需处理冲突' : '有本地新版本'
+  return '已同步'
+}
+
+function remoteDownloadStatusText(status: WebdavSyncStatus): string {
+  if (!status.remoteExists) return '无远端版本'
+  if (status.remoteHasUndownloadedChanges) return status.conflict ? '需处理冲突' : '有远端新版本'
+  return '已同步'
+}
+
+function syncProgressPercent(progress: WebdavSyncProgress): number {
+  if (progress.total <= 0) return 0
+  return Math.min(100, Math.max(0, Math.round((progress.current / progress.total) * 100)))
+}
+
+function SyncStatusItem({ label, value, tone = 'normal' }: { label: string; value: string; tone?: 'normal' | 'warning' | 'danger' }) {
+  return (
+    <div className={`sync-status-item ${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   )
 }

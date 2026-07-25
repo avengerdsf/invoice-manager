@@ -61,6 +61,7 @@ button, input, select { font: inherit; }
 .topbar { height: 54px; padding: 8px 16px; background: #ffffff; border-bottom: 1px solid var(--c-border); display: flex; align-items: center; position: relative; z-index: 10; }
 .toolbar { min-width: 0; display: flex; align-items: center; gap: 8px; flex: 1; }
 .toolbar .export-button { margin-left: 0; flex: 0 0 auto; min-width: 72px; height: 34px; border-radius: var(--r-sm) !important; }
+.toolbar .sync-button { flex: 0 0 auto; min-width: 72px; height: 34px; border-radius: var(--r-sm) !important; }
 .toolbar .fui-Button, .toolbar .fui-Select { height: 36px; border-radius: var(--r-sm); border: 1px solid var(--c-border-strong); background: #ffffff; transition: all var(--dur-fast) var(--ease-out); }
 .toolbar .fui-Button:not(:disabled):hover { border-color: var(--c-accent); background: var(--c-accent-light); color: var(--c-accent); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
 .toolbar-icon-button {
@@ -1706,6 +1707,163 @@ button.fui-Button[class*="primary"]:hover {
 .expense-editor-save-hint {
   color: var(--c-text-2);
   font-size: 12px;
+}
+
+.sync-dialog {
+  width: min(640px, calc(100vw - 48px)) !important;
+  max-width: min(640px, calc(100vw - 48px)) !important;
+}
+.sync-dialog-title {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.sync-dialog-title span {
+  color: var(--c-text-0);
+  font-size: 18px;
+  font-weight: 700;
+}
+.sync-dialog-title small {
+  color: var(--c-text-2);
+  font-size: 12px;
+  font-weight: 500;
+}
+.sync-dialog-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.sync-state-banner {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+.sync-state-banner strong {
+  color: #1d4ed8;
+  font-size: 15px;
+}
+.sync-state-banner span {
+  color: var(--c-text-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.sync-state-banner.latest {
+  border-color: #86efac;
+  background: var(--c-success-soft);
+}
+.sync-state-banner.latest strong {
+  color: #15803d;
+}
+.sync-state-banner.remote-newer,
+.sync-state-banner.local-newer,
+.sync-state-banner.remote-missing {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+.sync-state-banner.conflict {
+  border-color: #fbbf24;
+  background: #fffbeb;
+}
+.sync-state-banner.conflict strong {
+  color: #b45309;
+}
+.sync-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.sync-status-item {
+  min-width: 0;
+  min-height: 64px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  background: var(--c-surface-2);
+}
+.sync-status-item span {
+  color: var(--c-text-2);
+  font-size: 12px;
+}
+.sync-status-item strong {
+  min-width: 0;
+  color: var(--c-text-0);
+  font-size: 14px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.sync-status-item.warning strong {
+  color: #b45309;
+}
+.sync-status-item.danger strong {
+  color: var(--c-danger);
+}
+.sync-progress-panel {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  background: #ffffff;
+}
+.sync-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.sync-progress-head span {
+  min-width: 0;
+  color: var(--c-text-1);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sync-progress-head strong {
+  color: var(--c-accent);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.sync-progress-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--c-surface-3);
+}
+.sync-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--c-accent);
+  transition: width var(--dur-fast) var(--ease-out);
+}
+.sync-confirm-panel {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid #fbbf24;
+  border-radius: 8px;
+  background: #fffbeb;
+}
+.sync-confirm-panel strong {
+  color: #92400e;
+  font-size: 14px;
+}
+.sync-confirm-panel span {
+  color: var(--c-text-1);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 @media (max-width: 1279px) {

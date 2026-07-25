@@ -101,6 +101,18 @@ export const AppSettingsSchema = z.object({
   showProjectHistoryOnStartup: z.boolean().default(true),
   autoOpenLastProject: z.boolean().default(false),
   showSuccessMessages: z.boolean().default(true),
+  syncWebdav: z.object({
+    enabled: z.boolean().default(false),
+    url: z.string().default('https://dav.jianguoyun.com/dav/'),
+    username: z.string().default(''),
+    remoteDirectory: z.string().default('/InvoiceManager/'),
+    encryptedPassword: z.string().optional(),
+  }).default({
+    enabled: false,
+    url: 'https://dav.jianguoyun.com/dav/',
+    username: '',
+    remoteDirectory: '/InvoiceManager/',
+  }),
 })
 export type AppSettings = z.infer<typeof AppSettingsSchema>
 
@@ -112,6 +124,14 @@ export const AppSettingsUpdateSchema = z.object({
   showProjectHistoryOnStartup: z.boolean().optional(),
   autoOpenLastProject: z.boolean().optional(),
   showSuccessMessages: z.boolean().optional(),
+  syncWebdav: z.object({
+    enabled: z.boolean().optional(),
+    url: z.string().trim().min(1).optional(),
+    username: z.string().trim().optional(),
+    remoteDirectory: z.string().trim().min(1).optional(),
+    password: z.string().optional().nullable(),
+    clearPassword: z.boolean().optional(),
+  }).optional(),
   lastProjectParentDirectory: z.string().trim().min(1).nullable().optional(),
   lastOpenProjectDirectory: z.string().trim().min(1).nullable().optional(),
   lastExportDirectory: z.string().trim().min(1).nullable().optional(),
@@ -160,6 +180,61 @@ export interface AppDiagnostics {
 export interface ExportResult {
   filePath: string
   project: Project
+}
+
+export interface SyncPackageSummary {
+  projectName: string
+  projectId: string
+  revision: number
+  updatedAt: string
+  expenseCount: number
+  invoiceAttachmentCount: number
+  paymentAttachmentCount: number
+  otherAttachmentCount: number
+}
+
+export interface ImportSyncPackageResult {
+  session: ProjectSession
+  settings: AppSettings
+  summary: SyncPackageSummary
+  mode: 'new' | 'copy' | 'overwrite'
+  backupPath?: string
+}
+
+export interface WebdavTestResult {
+  ok: boolean
+  message: string
+}
+
+export interface WebdavSyncStatus {
+  localRevision: number
+  localUpdatedAt: string
+  remoteExists: boolean
+  remoteRevision: number | null
+  remoteUpdatedAt: string | null
+  localHasUnuploadedChanges: boolean
+  remoteHasUndownloadedChanges: boolean
+  conflict: boolean
+  state: 'remote-missing' | 'latest' | 'local-newer' | 'remote-newer' | 'conflict'
+}
+
+export interface WebdavSyncResult {
+  action: 'none' | 'upload' | 'download'
+  status: WebdavSyncStatus
+  session?: ProjectSession
+  settings?: AppSettings
+}
+
+export interface WebdavSyncStatusResult {
+  status: WebdavSyncStatus
+}
+
+export interface WebdavSyncProgress {
+  action: 'status' | 'upload' | 'download'
+  phase: string
+  current: number
+  total: number
+  message: string
 }
 
 export interface OcrAttachmentSource {
@@ -222,6 +297,14 @@ export const IPC_CHANNELS = {
   openAttachment: 'attachment:open',
   revealProject: 'project:reveal',
   exportProject: 'project:export',
+  importSyncPackage: 'sync:import-package',
+  exportSyncPackage: 'sync:export-package',
+  testWebdavConnection: 'sync:webdav-test',
+  syncCurrentProjectWebdav: 'sync:webdav-current-project',
+  getWebdavSyncStatus: 'sync:webdav-status',
+  uploadCurrentProjectWebdav: 'sync:webdav-upload',
+  downloadCurrentProjectWebdav: 'sync:webdav-download',
+  webdavSyncProgress: 'sync:webdav-progress',
   deleteCurrentProject: 'project:delete-current',
   getAllProjectsSummary: 'project:summary-all',
   moveCurrentProject: 'project:move-current',
@@ -253,6 +336,14 @@ export interface InvoiceManagerApi {
   openAttachment(attachmentId: string): Promise<void>
   revealProject(): Promise<void>
   exportProject(project: Project, options: ExportOptions): Promise<ExportResult | null>
+  importSyncPackage(): Promise<ImportSyncPackageResult | null>
+  exportSyncPackage(project: Project): Promise<ExportResult | null>
+  testWebdavConnection(settings?: AppSettingsUpdate['syncWebdav']): Promise<WebdavTestResult>
+  syncCurrentProjectWebdav(project: Project): Promise<WebdavSyncResult | null>
+  getWebdavSyncStatus(project: Project): Promise<WebdavSyncStatusResult>
+  uploadCurrentProjectWebdav(project: Project, force: boolean): Promise<WebdavSyncResult>
+  downloadCurrentProjectWebdav(project: Project, force: boolean): Promise<WebdavSyncResult>
+  onWebdavSyncProgress(callback: (progress: WebdavSyncProgress) => void): () => void
   deleteCurrentProject(): Promise<AppSettings>
   getAllProjectsSummary(currentProject?: Project): Promise<AllProjectsFundsSummary>
   moveCurrentProject(): Promise<{ session: ProjectSession; settings: AppSettings } | null>

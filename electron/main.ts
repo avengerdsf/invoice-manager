@@ -1,5 +1,6 @@
 ﻿import { mkdirSync } from 'node:fs'
-import { readFile, rm } from 'node:fs/promises'
+import { readFile, rm, writeFile, mkdir } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { copyFileSync, cpSync, existsSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -7,6 +8,16 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } from 
 import { AppSettingsStorage } from './app-settings'
 import { exportProject } from './exporter'
 import { ProjectStorage } from './project-storage'
+import {
+  createSyncSnapshot,
+  installSyncPackage,
+  safePackageFileName,
+  summarizeProject,
+  uniqueProjectRoot,
+  validateSyncPackageZip,
+  writeSyncPackageZip,
+} from './sync-package'
+import { WebdavClient, compareSyncState, createLocalSnapshot, syncStatusDetail } from './webdav-sync'
 import type {
   AttachmentKind,
   ExportOptions,
@@ -17,6 +28,8 @@ import type {
   DirectoryStatus,
   RecentProjectStatus,
   AppDiagnostics,
+  WebdavSyncProgress,
+  WebdavSyncStatus,
 } from '../src/shared/models'
 import { IPC_CHANNELS, ProjectSchema } from '../src/shared/models'
 import { calculateProjectSummary } from '../src/domain/project'
@@ -62,6 +75,78 @@ const sessionDataPath = path.join(app.getPath('temp'), 'InvoiceManager', 'Sessio
 mkdirSync(sessionDataPath, { recursive: true })
 app.setPath('sessionData', sessionDataPath)
 app.setAppLogsPath()
+
+async function getDeviceId(): Promise<string> {
+  const deviceIdPath = path.join(app.getPath('userData'), 'device-id')
+  try {
+    const existing = (await readFile(deviceIdPath, 'utf8')).trim()
+    if (existing) return existing
+  } catch {
+    // Created on first sync/export.
+  }
+  const deviceId = randomUUID()
+  await mkdir(path.dirname(deviceIdPath), { recursive: true })
+  await writeFile(deviceIdPath, deviceId, 'utf8')
+  return deviceId
+}
+
+async function findKnownProjectById(projectId: string): Promise<string | null> {
+  const settings = await settingsStorage.read()
+  const candidates = [...new Set([
+    ...settings.knownProjectPaths,
+    ...settings.recentProjects.map((project) => project.rootPath),
+  ])]
+  for (const rootPath of candidates) {
+    try {
+      const project = ProjectSchema.parse(JSON.parse(await readFile(path.join(rootPath, 'project.json'), 'utf8')))
+      if (project.id === projectId) return rootPath
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
+function formatSyncStatus(status: WebdavSyncStatus): string {
+  const stateText = status.state === 'remote-missing'
+    ? '远端不存在'
+    : status.state === 'latest'
+      ? '本地和远端已是最新'
+      : status.state === 'local-newer'
+        ? '本地较新'
+        : status.state === 'remote-newer'
+          ? '远端较新'
+          : '存在冲突'
+  return `${syncStatusDetail(status)}\n\n判断结果：${stateText}`
+}
+
+function emitWebdavSyncProgress(progress: WebdavSyncProgress): void {
+  mainWindow?.webContents.send(IPC_CHANNELS.webdavSyncProgress, progress)
+}
+
+async function prepareWebdavSync(rawProject: unknown): Promise<{
+  project: Project
+  activeRoot: string
+  client: WebdavClient
+  snapshot: Awaited<ReturnType<typeof createLocalSnapshot>>
+  remote: Awaited<ReturnType<WebdavClient['readRemoteIndex']>>
+  status: WebdavSyncStatus
+}> {
+  if (!storage.activeRoot) throw new Error('请先打开一个项目')
+  const activeRoot = storage.activeRoot
+  const incomingProject = ProjectSchema.parse(rawProject)
+  const project = storage.activeProject
+    && storage.activeProject.id === incomingProject.id
+    && storage.activeProject.revision >= incomingProject.revision
+    ? storage.activeProject
+    : await storage.save(incomingProject)
+  const config = await settingsStorage.readWebdavConfig()
+  const client = new WebdavClient(config)
+  const snapshot = await createLocalSnapshot(project, activeRoot, app.getVersion(), await getDeviceId())
+  const remote = await client.readRemoteIndex(project.id)
+  const status = compareSyncState(snapshot, remote)
+  return { project, activeRoot, client, snapshot, remote, status }
+}
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'invoice-app',
@@ -383,6 +468,245 @@ function registerIpc(): void {
       if (error) throw new Error(`无法打开导出目录：${error}`)
     }
     return { filePath: selection.filePath, project }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.importSyncPackage, async () => {
+    const selection = await dialog.showOpenDialog(mainWindow!, {
+      title: '从文件导入项目',
+      properties: ['openFile'],
+      filters: [{ name: '项目同步包', extensions: ['zip'] }],
+    })
+    if (selection.canceled || !selection.filePaths[0]) return null
+    const zipPath = selection.filePaths[0]
+    const packageData = await validateSyncPackageZip(zipPath)
+    const summary = packageData.summary
+    const detail = [
+      `项目名称：${summary.projectName}`,
+      `revision：${summary.revision}`,
+      `更新时间：${summary.updatedAt}`,
+      `明细数量：${summary.expenseCount}`,
+      `发票数量：${summary.invoiceAttachmentCount}`,
+      `付款截图数量：${summary.paymentAttachmentCount}`,
+      `其他附件数量：${summary.otherAttachmentCount}`,
+    ].join('\n')
+    const existingRoot = await findKnownProjectById(summary.projectId)
+    const confirmation = await dialog.showMessageBox(mainWindow!, existingRoot ? {
+      type: 'question',
+      title: '导入项目同步包',
+      message: '检测到相同 projectId 的项目',
+      detail,
+      buttons: ['覆盖现有项目', '导入为副本', '取消'],
+      defaultId: 1,
+      cancelId: 2,
+    } : {
+      type: 'question',
+      title: '导入项目同步包',
+      message: '确认导入以下项目？',
+      detail,
+      buttons: ['导入项目', '取消'],
+      defaultId: 0,
+      cancelId: 1,
+    })
+    if ((!existingRoot && confirmation.response !== 0) || (existingRoot && confirmation.response === 2)) return null
+    const mode = existingRoot
+      ? confirmation.response === 0 ? 'overwrite' : 'copy'
+      : 'new'
+    let targetRootPath = existingRoot && mode === 'overwrite' ? existingRoot : ''
+    if (!targetRootPath) {
+      const settings = await settingsStorage.read()
+      const parentSelection = await dialog.showOpenDialog(mainWindow!, {
+        title: '选择项目保存位置',
+        defaultPath: settings.lastProjectParentDirectory && existsSync(settings.lastProjectParentDirectory)
+          ? settings.lastProjectParentDirectory
+          : app.getPath('documents'),
+        properties: ['openDirectory', 'createDirectory'],
+      })
+      if (parentSelection.canceled || !parentSelection.filePaths[0]) return null
+      await settingsStorage.rememberProjectParentDirectory(parentSelection.filePaths[0])
+      targetRootPath = uniqueProjectRoot(parentSelection.filePaths[0], mode === 'copy' ? `${summary.projectName} 副本` : summary.projectName)
+    }
+    if (storage.activeRoot && path.resolve(storage.activeRoot).toLowerCase() === path.resolve(targetRootPath).toLowerCase()) {
+      await storage.close()
+    }
+    const installed = await installSyncPackage({
+      zipPath,
+      targetRootPath,
+      tempParentDirectory: path.join(app.getPath('temp'), 'InvoiceManager'),
+      mode,
+    })
+    const session = await storage.open(installed.rootPath)
+    const settings = await settingsStorage.rememberProject(session)
+    return { session, settings, summary: summarizeProject(session.project), mode, backupPath: installed.backupPath }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.exportSyncPackage, async (_event, rawProject: unknown) => {
+    if (!storage.activeRoot) throw new Error('请先打开一个项目')
+    const incomingProject = ProjectSchema.parse(rawProject)
+    const project = storage.activeProject
+      && storage.activeProject.id === incomingProject.id
+      && storage.activeProject.revision >= incomingProject.revision
+      ? storage.activeProject
+      : await storage.save(incomingProject)
+    const settings = await settingsStorage.read()
+    const suggestedFileName = safePackageFileName(project.name)
+    const selection = await dialog.showSaveDialog(mainWindow!, {
+      title: '导出项目同步包',
+      buttonLabel: '导出',
+      defaultPath: path.join(
+        settings.lastExportDirectory && existsSync(settings.lastExportDirectory)
+          ? settings.lastExportDirectory
+          : app.getPath('documents'),
+        suggestedFileName,
+      ),
+      filters: [{ name: '项目同步包', extensions: ['zip'] }],
+    })
+    if (selection.canceled || !selection.filePath) return null
+    await settingsStorage.rememberExportDirectory(path.dirname(selection.filePath))
+    const destinationPath = selection.filePath.endsWith('-invoice-sync.zip')
+      ? selection.filePath
+      : selection.filePath.replace(/\.zip$/i, '') + '-invoice-sync.zip'
+    const snapshot = await createSyncSnapshot(project, storage.activeRoot, app.getVersion(), await getDeviceId())
+    await writeSyncPackageZip(snapshot, destinationPath, path.join(app.getPath('temp'), 'InvoiceManager'))
+    const confirmation = await dialog.showMessageBox(mainWindow!, {
+      type: 'info',
+      title: '同步包导出完成',
+      message: '项目同步包已成功导出',
+      detail: destinationPath,
+      buttons: ['打开所在文件夹', '关闭'],
+      defaultId: 0,
+      cancelId: 1,
+    })
+    if (confirmation.response === 0) {
+      const error = await shell.openPath(path.dirname(destinationPath))
+      if (error) throw new Error(`无法打开导出目录：${error}`)
+    }
+    return { filePath: destinationPath, project }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.testWebdavConnection, async (_event, rawOverride: unknown) => {
+    const config = await settingsStorage.readWebdavConfig(rawOverride && typeof rawOverride === 'object' ? rawOverride as any : undefined)
+    try {
+      const client = new WebdavClient(config)
+      await client.testConnection()
+      return { ok: true, message: '连接成功，远程目录可访问' }
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.getWebdavSyncStatus, async (_event, rawProject: unknown) => {
+    const { status } = await prepareWebdavSync(rawProject)
+    return { status }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.uploadCurrentProjectWebdav, async (_event, rawProject: unknown, rawForce: unknown) => {
+    const { project, client, snapshot, status } = await prepareWebdavSync(rawProject)
+    const force = rawForce === true
+    if (!force && (status.state === 'remote-newer' || status.conflict)) {
+      throw new Error('远端较新或存在冲突，需要确认后才能上传')
+    }
+    await client.uploadSnapshot(snapshot, emitWebdavSyncProgress)
+    const nextRemote = await client.readRemoteIndex(project.id)
+    return { action: 'upload', status: compareSyncState(snapshot, nextRemote) }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.downloadCurrentProjectWebdav, async (_event, rawProject: unknown, rawForce: unknown) => {
+    const { project, activeRoot, client, remote, status } = await prepareWebdavSync(rawProject)
+    const force = rawForce === true
+    if (!remote) throw new Error('远端项目不存在，无法下载')
+    if (!force && (status.state === 'local-newer' || status.conflict)) {
+      throw new Error('本地较新或存在冲突，需要确认后才能下载')
+    }
+    const zipPath = await client.downloadProjectToZip(project.id, path.join(app.getPath('temp'), 'InvoiceManager'), emitWebdavSyncProgress)
+    await storage.close()
+    try {
+      emitWebdavSyncProgress({ action: 'download', phase: 'install', current: 1, total: 1, message: '正在备份并覆盖本地项目' })
+      await installSyncPackage({
+        zipPath,
+        targetRootPath: activeRoot,
+        tempParentDirectory: path.join(app.getPath('temp'), 'InvoiceManager'),
+        mode: 'overwrite',
+      })
+    } finally {
+      await rm(zipPath, { force: true })
+    }
+    const session = await storage.open(activeRoot)
+    emitWebdavSyncProgress({ action: 'download', phase: 'reopen', current: 1, total: 1, message: '正在重新打开项目' })
+    const settings = await settingsStorage.rememberProject(session)
+    const nextSnapshot = await createLocalSnapshot(session.project, session.rootPath, app.getVersion(), await getDeviceId())
+    const nextRemote = await client.readRemoteIndex(session.project.id)
+    return { action: 'download', status: compareSyncState(nextSnapshot, nextRemote), session, settings }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.syncCurrentProjectWebdav, async (_event, rawProject: unknown) => {
+    if (!storage.activeRoot) throw new Error('请先打开一个项目')
+    const incomingProject = ProjectSchema.parse(rawProject)
+    const project = storage.activeProject
+      && storage.activeProject.id === incomingProject.id
+      && storage.activeProject.revision >= incomingProject.revision
+      ? storage.activeProject
+      : await storage.save(incomingProject)
+    const config = await settingsStorage.readWebdavConfig()
+    const client = new WebdavClient(config)
+    const snapshot = await createLocalSnapshot(project, storage.activeRoot, app.getVersion(), await getDeviceId())
+    const remote = await client.readRemoteIndex(project.id)
+    const status = compareSyncState(snapshot, remote)
+    const buttons = status.state === 'latest'
+      ? ['关闭']
+      : status.state === 'remote-missing'
+        ? ['上传当前项目到坚果云', '取消']
+        : ['上传当前项目到坚果云', '从坚果云下载到当前项目', '取消']
+    const response = await dialog.showMessageBox(mainWindow!, {
+      type: status.conflict ? 'warning' : 'question',
+      title: '与坚果云同步',
+      message: '同步前请确认本地与远端状态',
+      detail: formatSyncStatus(status),
+      buttons,
+      defaultId: 0,
+      cancelId: buttons.length - 1,
+    })
+    if (status.state === 'latest' || response.response === buttons.length - 1) return { action: 'none', status }
+    if (response.response === 0) {
+      if ((status.state === 'remote-newer' || status.conflict) && (await dialog.showMessageBox(mainWindow!, {
+        type: 'warning',
+        title: '确认上传',
+        message: '远端较新或存在冲突，上传会以当前项目替换远端正式版本。',
+        buttons: ['继续上传', '取消'],
+        defaultId: 1,
+        cancelId: 1,
+      })).response !== 0) return { action: 'none', status }
+      await client.uploadSnapshot(snapshot)
+      const nextRemote = await client.readRemoteIndex(project.id)
+      return { action: 'upload', status: compareSyncState(snapshot, nextRemote) }
+    }
+    if (!remote) throw new Error('远端项目不存在，无法下载')
+    if ((status.state === 'local-newer' || status.conflict) && (await dialog.showMessageBox(mainWindow!, {
+      type: 'warning',
+      title: '确认下载',
+      message: '本地较新或存在冲突，下载会自动备份后覆盖当前项目。',
+      buttons: ['继续下载', '取消'],
+      defaultId: 1,
+      cancelId: 1,
+    })).response !== 0) return { action: 'none', status }
+    const zipPath = await client.downloadProjectToZip(project.id, path.join(app.getPath('temp'), 'InvoiceManager'))
+    const targetRootPath = storage.activeRoot
+    if (!targetRootPath) throw new Error('当前项目路径无效')
+    await storage.close()
+    try {
+      await installSyncPackage({
+        zipPath,
+        targetRootPath,
+        tempParentDirectory: path.join(app.getPath('temp'), 'InvoiceManager'),
+        mode: 'overwrite',
+      })
+    } finally {
+      await rm(zipPath, { force: true })
+    }
+    const session = await storage.open(targetRootPath)
+    const settings = await settingsStorage.rememberProject(session)
+    const nextSnapshot = await createLocalSnapshot(session.project, session.rootPath, app.getVersion(), await getDeviceId())
+    const nextRemote = await client.readRemoteIndex(session.project.id)
+    return { action: 'download', status: compareSyncState(nextSnapshot, nextRemote), session, settings }
   })
 
   // 新增：获取付款人使用统计

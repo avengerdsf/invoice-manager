@@ -12,6 +12,7 @@ const GLOBAL_PAGES = [
   { id: 'general' as SettingsPage, label: '基础设置' },
   { id: 'payers' as SettingsPage, label: '全局付款人' },
   { id: 'projectHistory' as SettingsPage, label: '项目记录' },
+  { id: 'sync' as SettingsPage, label: '同步设置' },
   { id: 'about' as SettingsPage, label: '关于' },
 ]
 

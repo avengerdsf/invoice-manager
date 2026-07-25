@@ -6,6 +6,7 @@ import type {
   InvoiceManagerApi,
   Project,
   SettingsDirectoryKind,
+  WebdavSyncProgress,
 } from '../src/shared/models'
 
 const IPC_CHANNELS = {
@@ -26,6 +27,14 @@ const IPC_CHANNELS = {
   openAttachment: 'attachment:open',
   revealProject: 'project:reveal',
   exportProject: 'project:export',
+  importSyncPackage: 'sync:import-package',
+  exportSyncPackage: 'sync:export-package',
+  testWebdavConnection: 'sync:webdav-test',
+  syncCurrentProjectWebdav: 'sync:webdav-current-project',
+  getWebdavSyncStatus: 'sync:webdav-status',
+  uploadCurrentProjectWebdav: 'sync:webdav-upload',
+  downloadCurrentProjectWebdav: 'sync:webdav-download',
+  webdavSyncProgress: 'sync:webdav-progress',
   deleteCurrentProject: 'project:delete-current',
   getAllProjectsSummary: 'project:summary-all',
   moveCurrentProject: 'project:move-current',
@@ -63,6 +72,18 @@ const api: InvoiceManagerApi = {
   openAttachment: (attachmentId: string) => ipcRenderer.invoke(IPC_CHANNELS.openAttachment, attachmentId),
   revealProject: () => ipcRenderer.invoke(IPC_CHANNELS.revealProject),
   exportProject: (project: Project, options: ExportOptions) => ipcRenderer.invoke(IPC_CHANNELS.exportProject, project, options),
+  importSyncPackage: () => ipcRenderer.invoke(IPC_CHANNELS.importSyncPackage),
+  exportSyncPackage: (project: Project) => ipcRenderer.invoke(IPC_CHANNELS.exportSyncPackage, project),
+  testWebdavConnection: (settings?: AppSettingsUpdate['syncWebdav']) => ipcRenderer.invoke(IPC_CHANNELS.testWebdavConnection, settings),
+  syncCurrentProjectWebdav: (project: Project) => ipcRenderer.invoke(IPC_CHANNELS.syncCurrentProjectWebdav, project),
+  getWebdavSyncStatus: (project: Project) => ipcRenderer.invoke(IPC_CHANNELS.getWebdavSyncStatus, project),
+  uploadCurrentProjectWebdav: (project: Project, force: boolean) => ipcRenderer.invoke(IPC_CHANNELS.uploadCurrentProjectWebdav, project, force),
+  downloadCurrentProjectWebdav: (project: Project, force: boolean) => ipcRenderer.invoke(IPC_CHANNELS.downloadCurrentProjectWebdav, project, force),
+  onWebdavSyncProgress: (callback: (progress: WebdavSyncProgress) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: WebdavSyncProgress) => callback(progress)
+    ipcRenderer.on(IPC_CHANNELS.webdavSyncProgress, listener)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.webdavSyncProgress, listener)
+  },
   deleteCurrentProject: () => ipcRenderer.invoke(IPC_CHANNELS.deleteCurrentProject),
   getAllProjectsSummary: (currentProject?: Project) => ipcRenderer.invoke(IPC_CHANNELS.getAllProjectsSummary, currentProject),
   moveCurrentProject: () => ipcRenderer.invoke(IPC_CHANNELS.moveCurrentProject),
