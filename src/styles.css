@@ -721,8 +721,6 @@ button, input, select { font: inherit; }
 .dialog-close-button:hover { transform: scale(1.04); }
 
 /* Settings Dialog */
-.settings-section { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--c-border); }
-.settings-section p { color: var(--c-text-3); font-size: 12px; line-height: 1.6; margin: 8px 0 12px; }
 .settings-input-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .settings-list { margin: 12px 0 4px; border: 1px solid var(--c-border); border-radius: var(--r-sm); overflow: hidden; background: #ffffff; }
 .settings-list > div { min-height: 42px; padding: 6px 10px 6px 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--c-border); transition: background var(--dur-fast) ease; }
@@ -789,7 +787,22 @@ button, input, select { font: inherit; }
 .attachment-preview-image { display: block; width: 100%; height: 100%; min-height: 0; object-fit: contain; box-shadow: var(--shadow-md); background: #ffffff; }
 .attachment-preview-pdf { width: 100%; height: 100%; min-height: 0; border: 0; border-radius: var(--r-sm); background: #ffffff; }
 .dialog-hint { margin: 10px 0 0; color: var(--c-text-3); font-size: 12px; line-height: 1.6; }
-
+.export-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.export-option-row {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.export-option-row > span {
+  color: var(--c-text-1);
+  font-size: 14px;
+}
 /* FluentUI input/select override */
 
 /* Input */

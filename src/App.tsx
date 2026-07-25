@@ -24,6 +24,7 @@ import type {
   ProjectSettingsDraft,
 } from './settings/settings-types'
 import { SettingsDialog } from './settings/SettingsDialog'
+import { SegmentedBooleanControl } from './settings/components/SettingsSection'
 
 function today(): string {
   return new Date().toISOString().slice(0, 10)
@@ -1648,16 +1649,16 @@ export default function App() {
           <DialogBody>
             <DialogTitle>导出压缩包</DialogTitle>
             <DialogContent>
-              <Checkbox
-                checked={includePayments}
-                onChange={(_event, data) => setIncludePayments(Boolean(data.checked))}
-                label="导出压缩包时包含支付截图"
-              />
-              <Checkbox
-                checked={includeOtherAttachments}
-                onChange={(_event, data) => setIncludeOtherAttachments(Boolean(data.checked))}
-                label="导出压缩包时包含其他附件"
-              />
+              <div className="export-options">
+                <div className="export-option-row">
+                  <span>导出压缩包时包含支付截图</span>
+                  <SegmentedBooleanControl checked={includePayments} onChange={setIncludePayments} />
+                </div>
+                <div className="export-option-row">
+                  <span>导出压缩包时包含其他附件</span>
+                  <SegmentedBooleanControl checked={includeOtherAttachments} onChange={setIncludeOtherAttachments} />
+                </div>
+              </div>
               <p className="dialog-hint">导出的附件按“001_物品名称”重命名，原文件不会被修改。</p>
             </DialogContent>
             <DialogActions>

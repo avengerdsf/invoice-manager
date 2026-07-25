@@ -49,13 +49,27 @@ export function SettingControl({
 }: SettingControlProps) {
   return (
     <SettingsRow label={label} description={description}>
-      <input
-        type="checkbox"
-        className="settings-checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        disabled={disabled}
-      />
+      <SegmentedBooleanControl checked={checked} onChange={onChange} disabled={disabled} />
     </SettingsRow>
+  )
+}
+
+export function SegmentedBooleanControl({ checked, onChange, disabled = false }: {
+  checked: boolean
+  onChange: (checked: boolean) => void
+  disabled?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      className="ios-boolean-switch"
+      role="switch"
+      aria-checked={checked}
+      aria-label="切换设置"
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+    >
+      <span aria-hidden="true" />
+    </button>
   )
 }

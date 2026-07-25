@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import './SettingsPage.css'
 import { SettingsSection, SettingControl, SettingsRow } from '../components/SettingsSection'
 import type { GlobalSettingsDraft, PageProps } from '../settings-types'
@@ -8,6 +8,11 @@ export function SyncSettingsPage({ draft, updateDraft }: PageProps) {
   const sync = globalDraft.syncWebdav
   const [testing, setTesting] = useState(false)
   const [testMessage, setTestMessage] = useState('')
+  const [editingPassword, setEditingPassword] = useState(!sync.passwordConfigured)
+
+  useEffect(() => {
+    setEditingPassword(!sync.passwordConfigured)
+  }, [sync.passwordConfigured])
 
   const updateSync = (update: Partial<GlobalSettingsDraft['syncWebdav']>) => {
     updateDraft({ syncWebdav: { ...sync, ...update } } as Partial<GlobalSettingsDraft>)
@@ -71,14 +76,38 @@ export function SyncSettingsPage({ draft, updateDraft }: PageProps) {
             onChange={(event) => updateSync({ username: event.target.value })}
           />
         </SettingsRow>
-        <SettingsRow label="第三方应用密码" description={sync.passwordConfigured && !sync.password ? '已保存安全存储密码；留空表示继续使用' : undefined}>
-          <input
-            className="settings-input sync-settings-input"
-            type="password"
-            value={sync.password}
-            placeholder={sync.passwordConfigured ? '已保存，留空不变' : ''}
-            onChange={(event) => updateSync({ password: event.target.value, clearPassword: false })}
-          />
+        <SettingsRow label="第三方应用密码" description={sync.passwordConfigured && !editingPassword ? '密码已保存在 Electron 安全存储中' : undefined}>
+          <div className="sync-password-control">
+            <input
+              className="settings-input sync-settings-input"
+              type={editingPassword ? 'password' : 'text'}
+              value={editingPassword ? sync.password : '••••••••'}
+              readOnly={!editingPassword}
+              disabled={!editingPassword}
+              placeholder={editingPassword && sync.passwordConfigured ? '输入新密码' : ''}
+              onChange={(event) => updateSync({ password: event.target.value, clearPassword: false })}
+            />
+            {sync.passwordConfigured && !editingPassword ? (
+              <button
+                className="settings-button settings-button-secondary sync-password-button"
+                type="button"
+                onClick={() => setEditingPassword(true)}
+              >
+                更改
+              </button>
+            ) : sync.passwordConfigured ? (
+              <button
+                className="settings-button settings-button-secondary sync-password-button"
+                type="button"
+                onClick={() => {
+                  updateSync({ password: '', clearPassword: false })
+                  setEditingPassword(false)
+                }}
+              >
+                取消更改
+              </button>
+            ) : null}
+          </div>
         </SettingsRow>
         <SettingsRow label="远程目录">
           <input
@@ -100,4 +129,3 @@ export function SyncSettingsPage({ draft, updateDraft }: PageProps) {
     </div>
   )
 }
-

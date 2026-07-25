@@ -90,7 +90,7 @@ export function ProjectHistoryPage({ appSettings, onSessionChange, onAppSettings
   const unavailableProjects = projectStatuses.filter((p) => !p.available)
 
   return (
-    <div className="settings-page">
+    <div className="settings-page settings-fill-page project-history-page">
       <SettingsSection title="项目记录">
         {isLoading ? (
           <div className="loading-text">加载中...</div>
