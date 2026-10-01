@@ -1,6 +1,8 @@
 import type { GlobalSettingsDraft, ProjectSettingsDraft } from './settings-types'
 import type { AppSettings, Project, Category } from '../shared/models'
 import type { ViewMode } from '../shared/models'
+import { getProjectTableConfig } from '../domain/table-config'
+import { getDefaultTableTemplateId, getTableTemplates } from '../domain/table-templates'
 
 /**
  * 规范化全局设置草稿
@@ -9,6 +11,15 @@ export function normalizeGlobalDraft(draft: GlobalSettingsDraft): GlobalSettings
   return {
     ...draft,
     payerNames: draft.payerNames.map((name) => name.trim()).filter((name) => name.length > 0),
+    tableTemplates: draft.tableTemplates.map((template) => ({
+      ...template,
+      name: template.name.trim(),
+      config: { columns: template.config.columns.map((column) => ({
+        ...column,
+        name: column.name.trim(),
+        options: column.options?.map((option) => ({ ...option, name: option.name.trim() })),
+      })) },
+    })),
     syncWebdav: {
       ...draft.syncWebdav,
       url: draft.syncWebdav.url.trim() || 'https://dav.jianguoyun.com/dav/',
@@ -33,6 +44,13 @@ export function normalizeProjectDraft(draft: ProjectSettingsDraft): ProjectSetti
     categories: draft.categories
       .map((cat, index) => ({ ...cat, name: cat.name.trim(), order: index }))
       .filter((cat) => cat.name.length > 0),
+    tableConfig: {
+      columns: draft.tableConfig.columns.map((column) => ({
+        ...column,
+        name: column.name.trim(),
+        options: column.options?.map((option) => ({ ...option, name: option.name.trim() })),
+      })),
+    },
   }
 }
 
@@ -41,6 +59,9 @@ export function normalizeProjectDraft(draft: ProjectSettingsDraft): ProjectSetti
  */
 export function isGlobalDirty(draft: GlobalSettingsDraft, settings: AppSettings): boolean {
   const normalized = normalizeGlobalDraft(draft)
+
+  if (JSON.stringify(normalized.tableTemplates) !== JSON.stringify(getTableTemplates(settings))) return true
+  if (normalized.defaultTableTemplateId !== getDefaultTableTemplateId(settings)) return true
 
   // 比较付款人
   const sortedPayers = [...normalized.payerNames].sort()
@@ -102,6 +123,8 @@ export function isProjectDirty(draft: ProjectSettingsDraft, project: Project): b
     if (draftCat.color !== projectCat.color) return true
   }
 
+  if (JSON.stringify(normalized.tableConfig) !== JSON.stringify(getProjectTableConfig(project))) return true
+
   return false
 }
 
@@ -150,6 +173,8 @@ export const PRESET_COLORS = [
 export function createDefaultGlobalDraft(settings: AppSettings): GlobalSettingsDraft {
   return {
     payerNames: [...settings.payerNames],
+    tableTemplates: getTableTemplates(settings),
+    defaultTableTemplateId: getDefaultTableTemplateId(settings),
     defaultViewMode: settings.defaultViewMode,
     defaultIncludePayments: settings.defaultIncludePayments,
     defaultIncludeOtherAttachments: settings.defaultIncludeOtherAttachments,
@@ -183,5 +208,6 @@ export function createDefaultProjectDraft(project: Project): ProjectSettingsDraf
   return {
     name: project.name,
     categories: project.categories.map((category) => ({ ...category })),
+    tableConfig: getProjectTableConfig(project),
   }
 }

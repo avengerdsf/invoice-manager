@@ -28,11 +28,15 @@ import type {
   DirectoryStatus,
   RecentProjectStatus,
   AppDiagnostics,
+  WebdavProjectSyncActionItem,
+  WebdavProjectSyncStatusItem,
   WebdavSyncProgress,
   WebdavSyncStatus,
 } from '../src/shared/models'
 import { IPC_CHANNELS, ProjectSchema } from '../src/shared/models'
 import { calculateProjectSummary } from '../src/domain/project'
+import { applyTableConfig } from '../src/domain/table-config'
+import { resolveProjectTemplate } from './project-template'
 
 function configureInstalledDataPath(): void {
   if (!app.isPackaged || process.platform !== 'win32') return
@@ -148,6 +152,149 @@ async function prepareWebdavSync(rawProject: unknown): Promise<{
   return { project, activeRoot, client, snapshot, remote, status }
 }
 
+function sameRootPath(left: string | null | undefined, right: string): boolean {
+  return Boolean(left) && path.resolve(left!).toLowerCase() === path.resolve(right).toLowerCase()
+}
+
+function parseRootPaths(rawRootPaths: unknown): string[] {
+  if (!Array.isArray(rawRootPaths)) throw new Error('项目列表无效')
+  const paths: string[] = []
+  const seen = new Set<string>()
+  for (const rawRootPath of rawRootPaths) {
+    if (typeof rawRootPath !== 'string' || !rawRootPath.trim()) throw new Error('项目路径无效')
+    const rootPath = rawRootPath.trim()
+    const key = path.resolve(rootPath).toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    paths.push(rootPath)
+  }
+  return paths
+}
+
+async function assertKnownProjectRoot(rootPath: string): Promise<void> {
+  if (sameRootPath(storage.activeRoot, rootPath)) return
+  const settings = await settingsStorage.read()
+  const knownRoots = [
+    ...settings.knownProjectPaths,
+    ...settings.recentProjects.map((project) => project.rootPath),
+  ]
+  if (knownRoots.some((knownRoot) => sameRootPath(knownRoot, rootPath))) return
+  throw new Error('项目不在记录中')
+}
+
+async function readProjectAtRoot(rootPath: string): Promise<Project> {
+  if (sameRootPath(storage.activeRoot, rootPath) && storage.activeProject) return storage.activeProject
+  return ProjectSchema.parse(JSON.parse(await readFile(path.join(rootPath, 'project.json'), 'utf8')))
+}
+
+async function prepareWebdavSyncByRoot(rootPath: string): Promise<{
+  project: Project
+  client: WebdavClient
+  snapshot: Awaited<ReturnType<typeof createLocalSnapshot>>
+  remote: Awaited<ReturnType<WebdavClient['readRemoteIndex']>>
+  status: WebdavSyncStatus
+}> {
+  await assertKnownProjectRoot(rootPath)
+  const project = await readProjectAtRoot(rootPath)
+  const config = await settingsStorage.readWebdavConfig()
+  const client = new WebdavClient(config)
+  const snapshot = await createLocalSnapshot(project, rootPath, app.getVersion(), await getDeviceId())
+  const remote = await client.readRemoteIndex(project.id)
+  const status = compareSyncState(snapshot, remote)
+  return { project, client, snapshot, remote, status }
+}
+
+async function getWebdavProjectStatusItem(rootPath: string): Promise<WebdavProjectSyncStatusItem> {
+  try {
+    const { status } = await prepareWebdavSyncByRoot(rootPath)
+    return { rootPath, status }
+  } catch (error) {
+    return { rootPath, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+async function uploadWebdavProject(rootPath: string, force: boolean): Promise<WebdavProjectSyncActionItem> {
+  const { project, client, snapshot, status } = await prepareWebdavSyncByRoot(rootPath)
+  if (!force && (status.state === 'remote-newer' || status.conflict)) {
+    throw new Error('远端较新或存在冲突，需要确认后才能上传')
+  }
+  await client.uploadSnapshot(snapshot, emitWebdavSyncProgress)
+  const nextRemote = await client.readRemoteIndex(project.id)
+  return { rootPath, action: 'upload', status: compareSyncState(snapshot, nextRemote) }
+}
+
+async function downloadWebdavProject(rootPath: string, force: boolean): Promise<WebdavProjectSyncActionItem> {
+  const { client, remote, status } = await prepareWebdavSyncByRoot(rootPath)
+  if (!remote) throw new Error('远端项目不存在，无法下载')
+  if (!force && (status.state === 'local-newer' || status.conflict)) {
+    throw new Error('本地较新或存在冲突，需要确认后才能下载')
+  }
+
+  const currentProjectSelected = sameRootPath(storage.activeRoot, rootPath)
+  const zipPath = await client.downloadProjectToZip(remote.project.id, path.join(app.getPath('temp'), 'InvoiceManager'), emitWebdavSyncProgress)
+  if (currentProjectSelected) await storage.close()
+  try {
+    emitWebdavSyncProgress({ action: 'download', phase: 'install', current: 1, total: 1, message: '正在备份并覆盖本地项目' })
+    await installSyncPackage({
+      zipPath,
+      targetRootPath: rootPath,
+      tempParentDirectory: path.join(app.getPath('temp'), 'InvoiceManager'),
+      mode: 'overwrite',
+    })
+  } catch (error) {
+    if (currentProjectSelected) await storage.open(rootPath).catch(() => undefined)
+    throw error
+  } finally {
+    await rm(zipPath, { force: true })
+  }
+
+  if (currentProjectSelected) {
+    const session = await storage.open(rootPath)
+    emitWebdavSyncProgress({ action: 'download', phase: 'reopen', current: 1, total: 1, message: '正在重新打开项目' })
+    const settings = await settingsStorage.rememberProject(session)
+    const nextSnapshot = await createLocalSnapshot(session.project, session.rootPath, app.getVersion(), await getDeviceId())
+    const nextRemote = await client.readRemoteIndex(session.project.id)
+    return { rootPath, action: 'download', status: compareSyncState(nextSnapshot, nextRemote), session, settings }
+  }
+
+  const project = await readProjectAtRoot(rootPath)
+  const nextSnapshot = await createLocalSnapshot(project, rootPath, app.getVersion(), await getDeviceId())
+  const nextRemote = await client.readRemoteIndex(project.id)
+  return { rootPath, action: 'download', status: compareSyncState(nextSnapshot, nextRemote) }
+}
+
+async function runWebdavProjectAction(
+  rawRootPaths: unknown,
+  rawForce: unknown,
+  action: 'upload' | 'download',
+): Promise<{ items: WebdavProjectSyncActionItem[] }> {
+  const rootPaths = parseRootPaths(rawRootPaths)
+  const force = rawForce === true
+  const items: WebdavProjectSyncActionItem[] = []
+  for (let index = 0; index < rootPaths.length; index += 1) {
+    const rootPath = rootPaths[index]
+    try {
+      emitWebdavSyncProgress({
+        action,
+        phase: 'project',
+        current: index + 1,
+        total: rootPaths.length,
+        message: `${action === 'upload' ? '正在上传' : '正在下载'}项目 ${index + 1}/${rootPaths.length}`,
+      })
+      items.push(action === 'upload'
+        ? await uploadWebdavProject(rootPath, force)
+        : await downloadWebdavProject(rootPath, force))
+    } catch (error) {
+      items.push({
+        rootPath,
+        action,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+  return { items }
+}
+
 protocol.registerSchemesAsPrivileged([{
   scheme: 'invoice-app',
   privileges: {
@@ -223,9 +370,11 @@ function registerIpc(): void {
     return settingsStorage.saveWorkspaceState(rawPaths, rawActivePath)
   })
 
-  ipcMain.handle(IPC_CHANNELS.createProject, async (_event, rawName: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.createProject, async (_event, rawName: unknown, rawTemplateId?: unknown) => {
     if (typeof rawName !== 'string') throw new Error('项目名称无效')
+    if (rawTemplateId !== undefined && typeof rawTemplateId !== 'string') throw new Error('模板无效')
     const settings = await settingsStorage.read()
+    const template = resolveProjectTemplate(settings, rawTemplateId as string | undefined)
     const selection = await dialog.showOpenDialog(mainWindow!, {
       title: '选择项目保存位置',
       defaultPath: settings.lastProjectParentDirectory && existsSync(settings.lastProjectParentDirectory)
@@ -236,6 +385,7 @@ function registerIpc(): void {
     if (selection.canceled || !selection.filePaths[0]) return null
     await settingsStorage.rememberProjectParentDirectory(selection.filePaths[0])
     const session = await storage.create(selection.filePaths[0], rawName, app.getVersion())
+    session.project = await storage.save(applyTableConfig(session.project, template.config))
     await settingsStorage.rememberProject(session)
     return session
   })
@@ -584,8 +734,8 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.testWebdavConnection, async (_event, rawOverride: unknown) => {
-    const config = await settingsStorage.readWebdavConfig(rawOverride && typeof rawOverride === 'object' ? rawOverride as any : undefined)
     try {
+      const config = await settingsStorage.readWebdavConfig(rawOverride && typeof rawOverride === 'object' ? rawOverride as any : undefined)
       const client = new WebdavClient(config)
       await client.testConnection()
       return { ok: true, message: '连接成功，远程目录可访问' }
@@ -598,6 +748,23 @@ function registerIpc(): void {
     const { status } = await prepareWebdavSync(rawProject)
     return { status }
   })
+
+  ipcMain.handle(IPC_CHANNELS.getWebdavProjectSyncStatuses, async (_event, rawRootPaths: unknown) => {
+    const rootPaths = parseRootPaths(rawRootPaths)
+    const items: WebdavProjectSyncStatusItem[] = []
+    for (const rootPath of rootPaths) {
+      items.push(await getWebdavProjectStatusItem(rootPath))
+    }
+    return { items }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.uploadWebdavProjects, async (_event, rawRootPaths: unknown, rawForce: unknown) => (
+    runWebdavProjectAction(rawRootPaths, rawForce, 'upload')
+  ))
+
+  ipcMain.handle(IPC_CHANNELS.downloadWebdavProjects, async (_event, rawRootPaths: unknown, rawForce: unknown) => (
+    runWebdavProjectAction(rawRootPaths, rawForce, 'download')
+  ))
 
   ipcMain.handle(IPC_CHANNELS.uploadCurrentProjectWebdav, async (_event, rawProject: unknown, rawForce: unknown) => {
     const { project, client, snapshot, status } = await prepareWebdavSync(rawProject)

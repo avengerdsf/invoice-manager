@@ -1726,6 +1726,10 @@ button.fui-Button[class*="primary"]:hover {
   width: min(640px, calc(100vw - 48px)) !important;
   max-width: min(640px, calc(100vw - 48px)) !important;
 }
+.sync-center-dialog {
+  width: min(1040px, calc(100vw - 56px)) !important;
+  max-width: min(1040px, calc(100vw - 56px)) !important;
+}
 .sync-dialog-title {
   min-width: 0;
   display: flex;
@@ -1734,7 +1738,7 @@ button.fui-Button[class*="primary"]:hover {
 }
 .sync-dialog-title span {
   color: var(--c-text-0);
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 700;
 }
 .sync-dialog-title small {
@@ -1746,6 +1750,168 @@ button.fui-Button[class*="primary"]:hover {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+.sync-center-content {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sync-center-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  min-height: 32px;
+}
+.sync-project-table {
+  max-height: min(590px, calc(100vh - 235px));
+  min-height: 430px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  background: #ffffff;
+}
+.sync-project-header,
+.sync-project-row {
+  display: grid;
+  grid-template-columns: 58px minmax(300px, 1.3fr) 168px 168px 132px;
+  align-items: center;
+  column-gap: 16px;
+}
+.sync-project-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  min-height: 42px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--c-border);
+  background: var(--c-surface-2);
+  color: var(--c-text-2);
+  font-size: 12px;
+  font-weight: 700;
+}
+.sync-project-row {
+  min-width: 0;
+  min-height: 88px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--c-border);
+  background: #ffffff;
+}
+.sync-project-row:last-child {
+  border-bottom: 0;
+}
+.sync-project-row.latest {
+  background: #ffffff;
+}
+.sync-project-row.local-newer,
+.sync-project-row.remote-newer,
+.sync-project-row.remote-missing {
+  background: #ffffff;
+}
+.sync-project-row.conflict,
+.sync-project-row.failed {
+  background: #fffdf7;
+}
+.sync-project-row.unavailable {
+  background: var(--c-surface-2);
+  opacity: .74;
+}
+.sync-project-main,
+.sync-project-meta,
+.sync-project-status {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sync-project-main strong {
+  min-width: 0;
+  color: var(--c-text-0);
+  font-size: 18px;
+  font-weight: 760;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sync-project-main span,
+.sync-project-meta span,
+.sync-project-status span {
+  min-width: 0;
+  color: var(--c-text-2);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.sync-project-status {
+  align-items: flex-start;
+}
+.sync-project-meta strong {
+  color: var(--c-text-0);
+  font-size: 16px;
+  font-weight: 760;
+  font-variant-numeric: tabular-nums;
+}
+.sync-project-empty-cell {
+  font-size: 16px !important;
+  font-weight: 650;
+}
+.sync-project-status strong {
+  min-height: 30px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 6px;
+  background: var(--c-surface-3);
+  color: var(--c-text-1);
+  font-size: 15px;
+  font-weight: 750;
+}
+.sync-project-row.latest .sync-project-status strong {
+  background: var(--c-success-soft);
+  color: #15803d;
+}
+.sync-project-row.local-newer .sync-project-status strong,
+.sync-project-row.remote-newer .sync-project-status strong,
+.sync-project-row.remote-missing .sync-project-status strong {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+.sync-project-row.conflict .sync-project-status strong,
+.sync-project-row.failed .sync-project-status strong {
+  background: #fffbeb;
+  color: #b45309;
+}
+.sync-project-empty {
+  min-height: 390px;
+  display: grid;
+  place-items: center;
+  color: var(--c-text-3);
+  font-size: 13px;
+}
+.sync-center-message {
+  padding: 9px 12px;
+  border: 1px solid #fbbf24;
+  border-radius: 6px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.sync-center-dialog .fui-DialogActions {
+  align-items: center;
+  gap: 10px;
+}
+.sync-center-dialog .fui-Button {
+  min-width: 112px;
+  height: 36px;
+  border-radius: var(--r-sm);
+  font-weight: 650;
+}
+.sync-center-dialog .fui-DialogActions .fui-Button:first-child {
+  min-width: 84px;
 }
 .sync-state-banner {
   padding: 14px 16px;

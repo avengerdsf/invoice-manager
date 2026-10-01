@@ -14,6 +14,10 @@ interface CustomSelectProps {
   size?: "small" | "medium";
   placeholder?: string;
   className?: string;
+  multiple?: boolean;
+  selectedValues?: string[];
+  onSelectionChange?: (values: string[]) => void;
+  ariaLabel?: string;
 }
 
 export default function CustomSelect({
@@ -24,6 +28,10 @@ export default function CustomSelect({
   size = "medium",
   placeholder = "请选择",
   className = "",
+  multiple = false,
+  selectedValues = [],
+  onSelectionChange,
+  ariaLabel,
 }: CustomSelectProps) {
   const [open, setOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -32,7 +40,19 @@ export default function CustomSelect({
   const listRef = useRef<HTMLUListElement>(null);
   const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
 
-  const selectedLabel = options.find((o) => o.value === value)?.label || placeholder;
+  const selectedLabel = multiple
+    ? options.filter((o) => selectedValues.includes(o.value)).map((o) => o.label).join('、') || placeholder
+    : options.find((o) => o.value === value)?.label || placeholder;
+  const choose = (nextValue: string) => {
+    if (multiple) {
+      onSelectionChange?.(selectedValues.includes(nextValue)
+        ? selectedValues.filter((item) => item !== nextValue)
+        : [...selectedValues, nextValue]);
+    } else {
+      onChange(nextValue);
+      setOpen(false);
+    }
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -92,8 +112,7 @@ export default function CustomSelect({
       case " ":
         e.preventDefault();
         if (open && options[highlightedIndex]) {
-          onChange(options[highlightedIndex].value);
-          setOpen(false);
+          choose(options[highlightedIndex].value);
         } else {
           setOpen(true);
         }
@@ -142,6 +161,7 @@ export default function CustomSelect({
         className="custom-select-trigger"
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-label={ariaLabel}
         style={{
           width: "100%",
           height,
@@ -200,9 +220,10 @@ export default function CustomSelect({
           ref={listRef}
           className="custom-select-dropdown"
           role="listbox"
+          aria-multiselectable={multiple || undefined}
           style={{
             ...dropdownStyle,
-            zIndex: 1000,
+            zIndex: 1100,
             margin: 0,
             padding: "4px",
             listStyle: "none",
@@ -214,7 +235,7 @@ export default function CustomSelect({
           }}
         >
           {options.map((opt, idx) => {
-            const isSelected = opt.value === value;
+            const isSelected = multiple ? selectedValues.includes(opt.value) : opt.value === value;
             const isHighlighted = idx === highlightedIndex;
             return (
               <li
@@ -222,8 +243,7 @@ export default function CustomSelect({
                 role="option"
                 aria-selected={isSelected}
                 onClick={() => {
-                  onChange(opt.value);
-                  setOpen(false);
+                  choose(opt.value);
                 }}
                 onMouseEnter={() => setHighlightedIndex(idx)}
                 style={{
@@ -238,7 +258,7 @@ export default function CustomSelect({
                   transition: "all .1s ease",
                 }}
               >
-                {opt.label}
+                {multiple && <span aria-hidden="true">{isSelected ? '✓ ' : '　'}</span>}{opt.label}
               </li>
             );
           })}

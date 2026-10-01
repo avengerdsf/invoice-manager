@@ -10,7 +10,7 @@ interface SettingsNavigationProps {
 
 const GLOBAL_PAGES = [
   { id: 'general' as SettingsPage, label: '基础设置' },
-  { id: 'payers' as SettingsPage, label: '全局付款人' },
+  { id: 'tableTemplates' as SettingsPage, label: '模板管理' },
   { id: 'projectHistory' as SettingsPage, label: '项目记录' },
   { id: 'sync' as SettingsPage, label: '同步设置' },
   { id: 'about' as SettingsPage, label: '关于' },
@@ -18,7 +18,7 @@ const GLOBAL_PAGES = [
 
 const PROJECT_PAGES = [
   { id: 'projectLocation' as SettingsPage, label: '项目文件与操作' },
-  { id: 'categories' as SettingsPage, label: '发票类别' },
+  { id: 'projectTable' as SettingsPage, label: '表格设置' },
 ]
 
 export function SettingsNavigation({

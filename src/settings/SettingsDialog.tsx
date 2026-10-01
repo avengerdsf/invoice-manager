@@ -15,12 +15,15 @@ import { GeneralSettingsPage } from './pages/GeneralSettingsPage'
 import { PayerSettingsPage } from './pages/PayerSettingsPage'
 import { ProjectHistoryPage } from './pages/ProjectHistoryPage'
 import { AboutPage } from './pages/AboutPage'
-import { ProjectCategoriesPage } from './pages/ProjectCategoriesPage'
 import { ProjectLocationPage } from './pages/ProjectLocationPage'
 import { SyncSettingsPage } from './pages/SyncSettingsPage'
+import { ProjectTablePage } from './pages/ProjectTablePage'
+import { validateTableConfig } from '../domain/table-config'
+import { validateTableTemplates } from '../domain/table-templates'
+import { TemplateManagementPage } from './pages/TemplateManagementPage'
 
-const GLOBAL_PAGES: SettingsPage[] = ['general', 'payers', 'projectHistory', 'sync', 'about']
-const PROJECT_PAGES: SettingsPage[] = ['projectLocation', 'categories']
+const GLOBAL_PAGES: SettingsPage[] = ['general', 'tableTemplates', 'payers', 'projectHistory', 'sync', 'about']
+const PROJECT_PAGES: SettingsPage[] = ['projectLocation', 'projectTable']
 
 export function SettingsDialog({
   isOpen,
@@ -36,28 +39,37 @@ export function SettingsDialog({
   const [projectDraft, setProjectDraft] = useState<ProjectSettingsDraft | null>(null)
   const [isSaving, setIsSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [editorOpen, setEditorOpen] = useState(false)
 
-  // 当设置或项目变化时，初始化草稿
+  // 每次打开都从已保存的数据创建草稿；取消后重新打开不能沿用旧草稿。
   useEffect(() => {
-    if (appSettings) {
-      setGlobalDraft(createDefaultGlobalDraft(appSettings))
-    }
-  }, [appSettings])
+    if (isOpen) setGlobalDraft(appSettings ? createDefaultGlobalDraft(appSettings) : null)
+  }, [appSettings, isOpen])
 
   useEffect(() => {
+    if (!isOpen) return
     if (session?.project) {
       setProjectDraft(createDefaultProjectDraft(session.project))
     } else {
       setProjectDraft(null)
     }
-  }, [session])
+  }, [session, isOpen])
 
   // 当项目关闭时，切换到全局页面
   useEffect(() => {
     if (!session && PROJECT_PAGES.includes(currentPage)) {
       setCurrentPage('general')
+      setEditorOpen(false)
     }
   }, [session, currentPage])
+
+  useEffect(() => {
+    if (!isOpen) {
+      setGlobalDraft(null)
+      setProjectDraft(null)
+      setEditorOpen(false)
+    }
+  }, [isOpen])
 
   const updateGlobalDraft = useCallback((update: Partial<GlobalSettingsDraft>) => {
     setGlobalDraft((prev) => (prev ? { ...prev, ...update } : null))
@@ -68,22 +80,34 @@ export function SettingsDialog({
   }, [])
 
   const handlePageChange = useCallback((page: SettingsPage) => {
+    if (page === currentPage) return
+    if (editorOpen && !window.confirm('当前列尚未完成，确认放弃修改并切换页面？')) return
     setCurrentPage(page)
+    setEditorOpen(false)
     setSaveError(null)
-  }, [])
+  }, [currentPage, editorOpen])
 
   const globalDirty = globalDraft && appSettings ? isGlobalDirty(globalDraft, appSettings) : false
   const projectDirty = projectDraft && session ? isProjectDirty(projectDraft, session.project) : false
 
   const handleSave = useCallback(async () => {
     if (!globalDraft || !appSettings) return
+    if (editorOpen) return
 
     setIsSaving(true)
     setSaveError(null)
 
     try {
+      const normalizedGlobal = normalizeGlobalDraft(globalDraft)
+      const templateErrors = validateTableTemplates(normalizedGlobal.tableTemplates, normalizedGlobal.defaultTableTemplateId)
+      if (templateErrors.length) throw new Error(templateErrors[0])
+      if (projectDraft && session && projectDirty) {
+        if (session.readOnly) throw new Error('只读项目无法修改设置')
+        const errors = validateTableConfig(projectDraft.tableConfig, session.project)
+        if (errors.length) throw new Error(errors[0])
+      }
       await onSave(
-        normalizeGlobalDraft(globalDraft),
+        normalizedGlobal,
         projectDraft ? normalizeProjectDraft(projectDraft) : null,
         Boolean(globalDirty),
         Boolean(projectDirty),
@@ -94,12 +118,16 @@ export function SettingsDialog({
     } finally {
       setIsSaving(false)
     }
-  }, [globalDraft, projectDraft, globalDirty, projectDirty, appSettings, onSave, onClose])
+  }, [globalDraft, projectDraft, globalDirty, projectDirty, appSettings, session, editorOpen, onSave, onClose])
 
   const handleCancel = useCallback(() => {
-    if ((globalDirty || projectDirty) && !window.confirm('存在未保存的设置，确认放弃修改？')) return
+    if ((editorOpen || globalDirty || projectDirty) && !window.confirm('存在未保存的设置或未完成的列编辑，确认放弃修改？')) return
+    setGlobalDraft(appSettings ? createDefaultGlobalDraft(appSettings) : null)
+    setProjectDraft(session ? createDefaultProjectDraft(session.project) : null)
+    setEditorOpen(false)
+    setSaveError(null)
     onClose()
-  }, [globalDirty, projectDirty, onClose])
+  }, [editorOpen, globalDirty, projectDirty, appSettings, session, onClose])
 
   const handleResetDefaults = useCallback(() => {
     if (currentPage === 'general') {
@@ -124,6 +152,7 @@ export function SettingsDialog({
 
   if (!isOpen) return null
   if (!globalDraft) return null
+  if (PROJECT_PAGES.includes(currentPage) && (!session || !projectDraft)) return null
 
   const hasProject = !!session
   const showResetDefaults = GLOBAL_PAGES.includes(currentPage) && currentPage === 'general'
@@ -138,11 +167,14 @@ export function SettingsDialog({
       onSessionChange,
       onAppSettingsChange,
       onCloseSettings: onClose,
+      onEditorStateChange: setEditorOpen,
     }
 
     switch (currentPage) {
       case 'general':
         return <GeneralSettingsPage {...commonProps} />
+      case 'tableTemplates':
+        return <TemplateManagementPage {...commonProps} />
       case 'payers':
         return <PayerSettingsPage {...commonProps} />
       case 'projectHistory':
@@ -151,8 +183,8 @@ export function SettingsDialog({
         return <SyncSettingsPage {...commonProps} />
       case 'about':
         return <AboutPage {...commonProps} />
-      case 'categories':
-        return <ProjectCategoriesPage {...commonProps} />
+      case 'projectTable':
+        return <ProjectTablePage {...commonProps} tableContext="project" />
       case 'projectLocation':
         return <ProjectLocationPage {...commonProps} />
       default:
@@ -183,13 +215,13 @@ export function SettingsDialog({
           />
 
           {/* 右侧内容区 */}
-          <div className={`settings-center-content ${currentPage === 'payers' || currentPage === 'categories' ? 'settings-list-only-content' : ''}`}>
+          <div className={`settings-center-content ${['payers', 'projectTable', 'tableTemplates'].includes(currentPage) ? 'settings-list-only-content' : ''}`}>
             {renderPage()}
           </div>
         </div>
 
         {/* 底部操作栏 */}
-        <SettingsFooter
+        {!editorOpen && <SettingsFooter
           dirtyText={dirtyText}
           showResetDefaults={showResetDefaults}
           onResetDefaults={handleResetDefaults}
@@ -197,7 +229,7 @@ export function SettingsDialog({
           onSave={handleSave}
           isSaving={isSaving}
           saveError={saveError}
-        />
+        />}
       </div>
     </div>
   )

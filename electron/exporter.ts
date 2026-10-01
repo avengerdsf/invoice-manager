@@ -2,7 +2,12 @@ import { createWriteStream, existsSync, realpathSync } from 'node:fs'
 import { copyFile, mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import ExcelJS from 'exceljs'
-import { calculateProjectSummary, expenseTotalCents } from '../src/domain/project'
+import { calculateProjectSummary } from '../src/domain/project'
+import {
+  getProjectTableConfig, getTableCellValue, getTableHeaderGroups,
+  getVisibleTableColumns, isNumericTableColumn,
+} from '../src/domain/table-config'
+import type { TableColumn } from '../src/shared/table-config'
 import type { Attachment, AttachmentKind, ExportOptions, Project } from '../src/shared/models'
 
 function safeName(value: string): string {
@@ -41,40 +46,126 @@ function applyHeaderStyle(cell: ExcelJS.Cell, fill: string): void {
   }
 }
 
-async function buildWorkbook(project: Project): Promise<Buffer> {
+function attachmentCount(project: Project, expenseId: string, kind: AttachmentKind): number {
+  const allocations = kind === 'invoice' ? project.invoiceAllocations : kind === 'payment'
+    ? project.paymentAllocations : project.otherAllocations
+  return new Set(allocations.filter((allocation) => allocation.expenseId === expenseId).map((allocation) => allocation.attachmentId)).size
+}
+
+function exportValue(column: TableColumn, expense: Project['expenses'][number], project: Project): string | number | boolean {
+  const builtin = column.builtin ?? column.id
+  if (builtin === 'invoice' || builtin === 'payment' || builtin === 'other') {
+    return attachmentCount(project, expense.id, builtin)
+  }
+  const value = getTableCellValue(column, expense, project)
+  if (value === null || value === undefined) return ''
+  if (Array.isArray(value)) return value.join('、')
+  if (typeof value === 'number') return Number.isFinite(value) ? value : '数值错误'
+  if (column.kind === 'input' && column.inputType === 'number' && typeof value === 'string') {
+    if (!value.trim()) return ''
+    const numericValue = Number(value)
+    return Number.isFinite(numericValue) ? numericValue : '数值错误'
+  }
+  return value
+}
+
+function numberFormat(column: TableColumn): string {
+  const precision = column.precision ?? 2
+  const decimals = precision > 0 ? `.${'0'.repeat(Math.min(precision, 8))}` : ''
+  const number = `#,##0${decimals}`
+  if (column.format === 'percent') return `${number}%`
+  if (column.format === 'currency') return `"¥"${number}`
+  return number
+}
+
+function addSummarySheet(workbook: ExcelJS.Workbook, project: Project): void {
+  const summary = calculateProjectSummary(project)
+  const sheet = workbook.addWorksheet('核算汇总')
+  sheet.mergeCells('A1:E1')
+  sheet.getCell('A1').value = '总价核算'
+  sheet.getCell('A1').font = { size: 16, bold: true }
+  sheet.getCell('A1').alignment = { horizontal: 'center' }
+  ;['类别', '类别合计', '实际付款', '有发票金额', '无发票金额'].forEach((value, index) => {
+    const cell = sheet.getCell(2, index + 1)
+    cell.value = value
+    applyHeaderStyle(cell, 'FFDCE6F1')
+  })
+  summary.categories.forEach((category, index) => {
+    const row = 3 + index
+    sheet.getCell(row, 1).value = category.categoryName
+    sheet.getCell(row, 2).value = category.totalCents / 100
+    sheet.getCell(row, 2).numFmt = '0.00'
+  })
+  const totalRow = 3 + summary.categories.length
+  sheet.getCell(totalRow, 1).value = '总计'
+  sheet.getCell(totalRow, 2).value = summary.totalCents / 100
+  sheet.getCell(totalRow, 3).value = summary.actualPaymentCents / 100
+  sheet.getCell(totalRow, 4).value = summary.invoicedCents / 100
+  sheet.getCell(totalRow, 5).value = summary.uninvoicedCents / 100
+  for (let column = 2; column <= 5; column += 1) sheet.getCell(totalRow, column).numFmt = '0.00'
+
+  sheet.mergeCells('G1:H1')
+  sheet.getCell('G1').value = '付款人核算'
+  sheet.getCell('G1').font = { size: 16, bold: true }
+  sheet.getCell('G1').alignment = { horizontal: 'center' }
+  ;['实际付款人', '实际付款合计'].forEach((value, index) => {
+    const cell = sheet.getCell(2, 7 + index)
+    cell.value = value
+    applyHeaderStyle(cell, 'FFE8E0F2')
+  })
+  summary.payers.forEach((payer, index) => {
+    const row = 3 + index
+    sheet.getCell(row, 7).value = payer.payerName
+    sheet.getCell(row, 8).value = payer.actualPaymentCents / 100
+    sheet.getCell(row, 8).numFmt = '0.00'
+  })
+  ;[14, 15, 15, 16, 16, 3, 18, 18].forEach((width, index) => { sheet.getColumn(index + 1).width = width })
+}
+
+export async function buildWorkbook(project: Project): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook()
   workbook.creator = '发票整理助手'
+  const config = getProjectTableConfig(project)
+  const visibleColumns = getVisibleTableColumns(config).filter((column) => column.id !== 'actions' && column.builtin !== 'actions')
+  const visibleIds = new Set(visibleColumns.map((column) => column.id))
+  const headerGroups = getTableHeaderGroups(config)
+    .map(({ column, children }) => ({ column, children: children.filter((child) => visibleIds.has(child.id)) }))
+    .filter(({ column, children }) => column.kind === 'group' ? children.length > 0 : visibleIds.has(column.id))
   const sheet = workbook.addWorksheet('报销明细表', {
-    views: [{ state: 'frozen', ySplit: 2, topLeftCell: 'A3', activeCell: 'A3' }],
+    views: [{ state: 'frozen', ySplit: 3, topLeftCell: 'A4', activeCell: 'A4' }],
   })
-  sheet.mergeCells('A1:J1')
+  if (visibleColumns.length > 1) sheet.mergeCells(1, 1, 1, visibleColumns.length)
   sheet.getCell('A1').value = '报销明细表'
   sheet.getCell('A1').font = { size: 16, bold: true }
   sheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' }
-  ;['类别', '日期', '详细名称', '价格', '税费', '总价', '实际付款', '实际付款人', '备注', '已报销']
-    .forEach((value, index) => {
-      const cell = sheet.getCell(2, index + 1)
-      cell.value = value
-      applyHeaderStyle(cell, 'FFE2E8F0')
-    })
 
-  const categoryMap = new Map(project.categories.map((item) => [item.id, item.name]))
+  let headerColumn = 1
+  for (const group of headerGroups) {
+    const cell = sheet.getCell(2, headerColumn)
+    cell.value = group.column.name
+    applyHeaderStyle(cell, 'FFE2E8F0')
+    if (group.column.kind === 'group') {
+      if (group.children.length > 1) sheet.mergeCells(2, headerColumn, 2, headerColumn + group.children.length - 1)
+      for (const child of group.children) {
+        const childCell = sheet.getCell(3, headerColumn)
+        childCell.value = child.name
+        applyHeaderStyle(childCell, 'FFE2E8F0')
+        headerColumn += 1
+      }
+    } else {
+      sheet.mergeCells(2, headerColumn, 3, headerColumn)
+      headerColumn += 1
+    }
+  }
+
   project.expenses.forEach((expense, index) => {
-    const row = sheet.getRow(index + 3)
-    row.values = [
-      categoryMap.get(expense.categoryId) ?? '未分类',
-      expense.date,
-      expense.name,
-      expense.priceCents / 100,
-      expense.taxCents / 100,
-      expenseTotalCents(expense) / 100,
-      expenseTotalCents(expense) / 100,
-      expense.actualPayer,
-      expense.note,
-      expense.reimbursed ? '是' : '否',
-    ]
-    ;[4, 5, 6, 7].forEach((column) => {
-      row.getCell(column).numFmt = '0.00'
+    const row = sheet.getRow(index + 4)
+    visibleColumns.forEach((column, columnIndex) => {
+      const cell = row.getCell(columnIndex + 1)
+      cell.value = exportValue(column, expense, project)
+      if (typeof cell.value === 'number' && (isNumericTableColumn(column) || column.kind === 'formula')) {
+        cell.numFmt = numberFormat(column)
+      }
     })
     row.eachCell((cell) => {
       cell.alignment = { vertical: 'middle', wrapText: true }
@@ -86,57 +177,8 @@ async function buildWorkbook(project: Project): Promise<Buffer> {
       }
     })
   })
-  sheet.columns = [
-    { width: 14 }, { width: 13 }, { width: 30 }, { width: 13 }, { width: 13 },
-    { width: 13 }, { width: 15 }, { width: 16 }, { width: 30 }, { width: 12 },
-  ]
-
-  const summary = calculateProjectSummary(project)
-  sheet.mergeCells('L1:P1')
-  sheet.getCell('L1').value = '总价核算'
-  sheet.getCell('L1').font = { size: 16, bold: true }
-  sheet.getCell('L1').alignment = { horizontal: 'center' }
-  ;['类别', '类别合计', '实际付款', '有发票金额', '无发票金额'].forEach((value, index) => {
-    const cell = sheet.getCell(2, 12 + index)
-    cell.value = value
-    applyHeaderStyle(cell, 'FFDCE6F1')
-  })
-  summary.categories.forEach((category, index) => {
-    const row = 3 + index
-    sheet.getCell(row, 12).value = category.categoryName
-    sheet.getCell(row, 13).value = category.totalCents / 100
-    sheet.getCell(row, 13).numFmt = '0.00'
-  })
-  const totalRow = 3 + summary.categories.length
-  sheet.getCell(totalRow, 12).value = '总计'
-  sheet.getCell(totalRow, 13).value = summary.totalCents / 100
-  sheet.getCell(totalRow, 14).value = summary.actualPaymentCents / 100
-  sheet.getCell(totalRow, 15).value = summary.invoicedCents / 100
-  sheet.getCell(totalRow, 16).value = summary.uninvoicedCents / 100
-  for (let column = 13; column <= 16; column += 1) sheet.getCell(totalRow, column).numFmt = '0.00'
-  sheet.columns[11].width = 14
-  sheet.columns[12].width = 15
-  sheet.columns[13].width = 15
-  sheet.columns[14].width = 16
-  sheet.columns[15].width = 16
-
-  sheet.mergeCells('R1:S1')
-  sheet.getCell('R1').value = '付款人核算'
-  sheet.getCell('R1').font = { size: 16, bold: true }
-  sheet.getCell('R1').alignment = { horizontal: 'center' }
-  ;['实际付款人', '实际付款合计'].forEach((value, index) => {
-    const cell = sheet.getCell(2, 18 + index)
-    cell.value = value
-    applyHeaderStyle(cell, 'FFE8E0F2')
-  })
-  summary.payers.forEach((payer, index) => {
-    const row = 3 + index
-    sheet.getCell(row, 18).value = payer.payerName
-    sheet.getCell(row, 19).value = payer.actualPaymentCents / 100
-    sheet.getCell(row, 19).numFmt = '0.00'
-  })
-  sheet.columns[17].width = 18
-  sheet.columns[18].width = 18
+  visibleColumns.forEach((column, index) => { sheet.getColumn(index + 1).width = Math.max(10, Math.min(60, Math.round((column.width ?? 112) / 7))) })
+  addSummarySheet(workbook, project)
   return Buffer.from(await workbook.xlsx.writeBuffer())
 }
 

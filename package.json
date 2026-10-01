@@ -1,7 +1,7 @@
 {
   "name": "invoice-manager",
   "productName": "发票整理助手",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "private": true,
   "description": "本地发票与支付截图整理、核算和导出工具",
   "author": {

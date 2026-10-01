@@ -1,3 +1,8 @@
+import { ConfiguredTableHeader } from './components/ConfiguredTableHeader'
+import { CustomFieldControl } from './components/CustomFieldControl'
+import { applyTableConfig, createExpenseCustomValues, getProjectPayerNames, getProjectTableConfig, getVisibleTableColumns } from './domain/table-config'
+import type { CustomValue, TableColumn } from './shared/table-config'
+import { getTableTemplates, getDefaultTableTemplateId } from './domain/table-templates'
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Button,
@@ -18,13 +23,21 @@ import appIconUrl from '../build/app-icon.png'
 import { calculateProjectSummary, createExpense, expenseTotalCents, formatMoney } from './domain/project'
 import { recognizeInvoiceAmounts } from './ocr/ocr-client'
 import type { InvoiceAmounts } from './ocr/amount'
-import type { Allocation, AllProjectsFundsSummary, AppSettings, Attachment, AttachmentKind, ExpenseItem, Project, ProjectSession, WebdavSyncProgress, WebdavSyncStatus } from './shared/models'
+import type { Allocation, AllProjectsFundsSummary, AppSettings, Attachment, AttachmentKind, ExpenseItem, Project, ProjectSession, WebdavSyncProgress } from './shared/models'
 import type {
   GlobalSettingsDraft,
   ProjectSettingsDraft,
 } from './settings/settings-types'
 import { SettingsDialog } from './settings/SettingsDialog'
 import { SegmentedBooleanControl } from './settings/components/SettingsSection'
+import {
+  applySyncProjectStatusItems,
+  createSyncProjectRows,
+  markRowsChecking,
+  syncProjectCloudDisplay,
+  syncProjectLocalDisplay,
+  type SyncProjectRow,
+} from './sync/sync-center'
 
 function today(): string {
   return new Date().toISOString().slice(0, 10)
@@ -44,17 +57,12 @@ type RemovalRequest =
   | { kind: 'attachment'; expenseId: string; attachmentKind: AttachmentKind; attachmentId: string }
 
 type ViewMode = 'table' | 'card'
-type ToolbarMenu = 'add' | 'sync'
+type ToolbarMenu = 'add'
 const ATTACHMENT_KINDS: AttachmentKind[] = ['invoice', 'payment', 'other']
 
 interface OcrOverwriteRequest {
   current: InvoiceAmounts
   recognized: InvoiceAmounts
-}
-
-interface SyncDialogState {
-  status: WebdavSyncStatus
-  confirmAction: 'upload' | 'download' | null
 }
 
 export default function App() {
@@ -79,7 +87,10 @@ export default function App() {
   const [attachmentPreview, setAttachmentPreview] = useState<{ id: string; name: string; mimeType: string; url: string } | null>(null)
   const [removalRequest, setRemovalRequest] = useState<RemovalRequest | null>(null)
   const [ocrOverwriteRequest, setOcrOverwriteRequest] = useState<OcrOverwriteRequest | null>(null)
-  const [syncDialog, setSyncDialog] = useState<SyncDialogState | null>(null)
+  const [syncCenterOpen, setSyncCenterOpen] = useState(false)
+  const [syncRows, setSyncRows] = useState<SyncProjectRow[]>([])
+  const [syncCenterLoading, setSyncCenterLoading] = useState(false)
+  const [syncCenterMessage, setSyncCenterMessage] = useState('')
   const [syncActionBusy, setSyncActionBusy] = useState(false)
   const [syncProgress, setSyncProgress] = useState<WebdavSyncProgress | null>(null)
   const [message, setMessage] = useState('')
@@ -103,6 +114,7 @@ export default function App() {
     },
   })
   const [projectNameDialog, setProjectNameDialog] = useState<string | null>(null)
+  const [newProjectTemplateId, setNewProjectTemplateId] = useState('')
   const [missingRecentProject, setMissingRecentProject] = useState<{ name: string; rootPath: string } | null>(null)
   const changeVersion = useRef(0)
   const startupProjectAttempted = useRef(false)
@@ -110,6 +122,7 @@ export default function App() {
   const [settingsCenterOpen, setSettingsCenterOpen] = useState(false)
   const [startEntered, setStartEntered] = useState(false)
   const saving = useRef(false)
+  const saveInFlight = useRef<Promise<unknown> | null>(null)
   const projectAddButtonRef = useRef<HTMLButtonElement | null>(null)
   const projectTabsRef = useRef<HTMLDivElement | null>(null)
   const tablePanelRef = useRef<HTMLElement | null>(null)
@@ -124,7 +137,6 @@ export default function App() {
   } | null>(null)
   const suppressFloatingAddClick = useRef(false)
   const lastAttachmentDialog = useRef<{ expenseId: string; kind: AttachmentKind } | null>(null)
-  const lastSyncDialog = useRef<SyncDialogState | null>(null)
   const ocrOverwriteResolver = useRef<((overwrite: boolean) => void) | null>(null)
   const [floatingAddPosition, setFloatingAddPosition] = useState<{ x: number; y: number } | null>(null)
   const [projectAddMenuPosition, setProjectAddMenuPosition] = useState<{ left: number; top: number } | null>(null)
@@ -133,6 +145,9 @@ export default function App() {
 
   const project = session?.project ?? null
   const readOnly = session?.readOnly ?? true
+  const tableConfig = useMemo(() => project ? getProjectTableConfig(project) : { columns: [] }, [project])
+  const tableColumns = useMemo(() => getVisibleTableColumns(tableConfig), [tableConfig])
+  const projectPayerNames = useMemo(() => project ? getProjectPayerNames(project) : [], [project])
   const showWorkspaceShell = Boolean(project || startEntered)
   const webdavSyncAvailable = Boolean(
     appSettings.syncWebdav.enabled
@@ -142,9 +157,7 @@ export default function App() {
     && appSettings.syncWebdav.encryptedPassword,
   )
   if (attachmentDialog) lastAttachmentDialog.current = attachmentDialog
-  if (syncDialog) lastSyncDialog.current = syncDialog
   const renderedAttachmentDialog = attachmentDialog ?? lastAttachmentDialog.current
-  const renderedSyncDialog = syncDialog ?? lastSyncDialog.current
   const summary = useMemo(() => (project ? calculateProjectSummary(project) : null), [project])
   const editingExpense = useMemo(() => (
     project && editingExpenseId ? project.expenses.find((expense) => expense.id === editingExpenseId) ?? null : null
@@ -157,6 +170,9 @@ export default function App() {
         || (payerFilter === '__unset__' ? !expense.actualPayer.trim() : expense.actualPayer === payerFilter))
     ))
   }, [project, categoryFilter, payerFilter])
+  const availableSyncProjectCount = syncRows.filter((row) => row.available).length
+  const selectedSyncProjectCount = syncRows.filter((row) => row.available && row.checked).length
+  const allAvailableSyncProjectsChecked = availableSyncProjectCount > 0 && selectedSyncProjectCount === availableSyncProjectCount
   const categoryFilterOptions = useMemo(() => (
     project
       ? [{ value: '__all__', label: '类别：全部' }, ...project.categories.map((category) => ({ value: category.id, label: `类别：${category.name}` }))]
@@ -164,13 +180,13 @@ export default function App() {
   ), [project])
   const payerFilterOptions = useMemo(() => {
     if (!project) return [{ value: '__all__', label: '付款人：全部' }]
-    const payerNames = [...new Set([...appSettings.payerNames, ...project.expenses.map((expense) => expense.actualPayer).filter(Boolean)])]
+    const payerNames = getProjectPayerNames(project)
     return [
       { value: '__all__', label: '付款人：全部' },
       { value: '__unset__', label: '付款人：未设置' },
       ...payerNames.map((payerName) => ({ value: payerName, label: `付款人：${payerName}` })),
     ]
-  }, [appSettings.payerNames, project])
+  }, [project])
   const currentPayerBreakdowns = useMemo(() => {
     if (!project) return []
     const totals = new Map<string, { totalCents: number; reimbursedCents: number; unreimbursedCents: number }>()
@@ -307,7 +323,9 @@ export default function App() {
     const previousRootPath = session.rootPath
     saving.current = true
     try {
-      const result = await window.invoiceManager.saveProject(snapshot)
+      const pending = window.invoiceManager.saveProject(snapshot)
+      saveInFlight.current = pending
+      const result = await pending
       const saved = result.project
       if (result.rootPath !== session.rootPath) {
         setAppSettings(await window.invoiceManager.getSettings())
@@ -334,6 +352,7 @@ export default function App() {
       return false
     } finally {
       saving.current = false
+      saveInFlight.current = null
     }
   }
 
@@ -353,38 +372,7 @@ export default function App() {
       setDirty(false)
       setSession(opened)
       setStartEntered(true)
-      let settings = await window.invoiceManager.getSettings()
-      const projectPayerNames = [...new Set(
-        opened.project.expenses
-          .map((expense) => expense.actualPayer.trim())
-          .filter(Boolean),
-      )]
-      const missingPayerNames = projectPayerNames.filter((payerName) => !settings.payerNames.includes(payerName))
-      if (missingPayerNames.length > 0) {
-        settings = await window.invoiceManager.saveSettings({
-          payerNames: [...settings.payerNames, ...missingPayerNames],
-          defaultViewMode: settings.defaultViewMode,
-          defaultIncludePayments: settings.defaultIncludePayments,
-          defaultIncludeOtherAttachments: settings.defaultIncludeOtherAttachments,
-          showProjectHistoryOnStartup: settings.showProjectHistoryOnStartup,
-          autoOpenLastProject: settings.autoOpenLastProject,
-          showSuccessMessages: settings.showSuccessMessages,
-          syncWebdav: {
-            enabled: settings.syncWebdav.enabled,
-            url: settings.syncWebdav.url,
-            username: settings.syncWebdav.username,
-            remoteDirectory: settings.syncWebdav.remoteDirectory,
-          },
-          lastProjectParentDirectory: settings.lastProjectParentDirectory ?? null,
-          lastOpenProjectDirectory: settings.lastOpenProjectDirectory ?? null,
-          lastExportDirectory: settings.lastExportDirectory ?? null,
-          lastImportDirectories: {
-            invoice: settings.lastImportDirectories.invoice ?? null,
-            payment: settings.lastImportDirectories.payment ?? null,
-            other: settings.lastImportDirectories.other ?? null,
-          },
-        })
-      }
+      const settings = await window.invoiceManager.getSettings()
       setAppSettings(settings)
       if (opened.readOnly) setMessage('项目已被其他进程占用，当前只读打开')
       else showSuccessMessage('项目已打开')
@@ -438,6 +426,7 @@ export default function App() {
   }
 
   const requestCreateProject = () => {
+    setNewProjectTemplateId(getDefaultTableTemplateId(appSettings))
     setProjectNameDialog(`报销项目_${today().replace(/-/g, '')}`)
   }
 
@@ -446,15 +435,28 @@ export default function App() {
     const expenseId = window.crypto.randomUUID()
     updateProject((draft) => {
       const categoryId = draft.categories[0]?.id ?? 'uncategorized'
-      draft.expenses.push(createExpense(expenseId, categoryId, today()))
+      const item = createExpense(expenseId, categoryId, today())
+      const config = getProjectTableConfig(draft)
+      item.customValues = createExpenseCustomValues(config)
+      const categoryColumn = config.columns.find((column) => column.builtin === 'category')
+      if (typeof categoryColumn?.defaultValue === 'string' && draft.categories.some((category) => category.id === categoryColumn.defaultValue)) item.categoryId = categoryColumn.defaultValue
+      const payerColumn = config.columns.find((column) => column.builtin === 'actualPayer')
+      if (typeof payerColumn?.defaultValue === 'string') item.actualPayer = payerColumn.options?.find((option) => option.id === payerColumn.defaultValue)?.name ?? ''
+      draft.expenses.push(item)
     })
     if (viewMode === 'card') setEditingExpenseId(expenseId)
   }
 
-  const requestOpenSettings = () => {
+  const requestOpenSettings = async () => {
     setOpenToolbarMenu(null)
     setProjectAddMenuPosition(null)
-    setSettingsCenterOpen(true)
+    try {
+      if (saveInFlight.current) await saveInFlight.current
+      if (dirty && !(await save())) return
+      setSettingsCenterOpen(true)
+    } catch (error) {
+      setMessage(`保存当前明细失败：${errorMessage(error)}`)
+    }
   }
 
   const handleSettingsCenterSave = async (
@@ -469,11 +471,17 @@ export default function App() {
       }
 
       const previousRootPath = session.rootPath
-      const nextProject = structuredClone(session.project)
-      nextProject.name = projectDraft.name
-      nextProject.categories = structuredClone(projectDraft.categories)
+      const nextProject = applyTableConfig({ ...session.project, name: projectDraft.name }, projectDraft.tableConfig)
 
-      const result = await window.invoiceManager.saveProject(nextProject)
+      if (saveInFlight.current) await saveInFlight.current
+      changeVersion.current += 1
+      saving.current = true
+      const pending = window.invoiceManager.saveProject(nextProject)
+      saveInFlight.current = pending
+      const result = await pending.finally(() => {
+        saving.current = false
+        saveInFlight.current = null
+      })
 
       setSession((current) => (
         current
@@ -501,6 +509,8 @@ export default function App() {
     if (globalDirty) {
       const updatedSettings = await window.invoiceManager.saveSettings({
         payerNames: globalDraft.payerNames,
+        tableTemplates: globalDraft.tableTemplates,
+        defaultTableTemplateId: globalDraft.defaultTableTemplateId,
         defaultViewMode: globalDraft.defaultViewMode,
         defaultIncludePayments: globalDraft.defaultIncludePayments,
         defaultIncludeOtherAttachments: globalDraft.defaultIncludeOtherAttachments,
@@ -538,13 +548,20 @@ export default function App() {
     const name = projectNameDialog.trim()
     if (!name) return
     setProjectNameDialog(null)
-    void openSession(() => window.invoiceManager.createProject(name))
+    void openSession(() => window.invoiceManager.createProject(name, newProjectTemplateId || getDefaultTableTemplateId(appSettings)))
   }
 
   const updateExpense = (expenseId: string, field: keyof ExpenseItem, value: string | number | boolean) => {
     updateProject((draft) => {
       const expense = draft.expenses.find((item) => item.id === expenseId)
       if (expense) Object.assign(expense, { [field]: value })
+    })
+  }
+
+  const updateCustomExpense = (expenseId: string, columnId: string, value: CustomValue) => {
+    updateProject((draft) => {
+      const expense = draft.expenses.find((item) => item.id === expenseId)
+      if (expense) expense.customValues = { ...expense.customValues, [columnId]: value }
     })
   }
 
@@ -791,68 +808,128 @@ export default function App() {
     }
   }
 
-  const syncWithWebdav = async () => {
-    if (!project || session?.readOnly) return
-    setOpenToolbarMenu(null)
-    setBusy(true)
-    try {
-      if (dirty && !(await save())) return
-      const result = await window.invoiceManager.getWebdavSyncStatus(project)
-      setSyncDialog({ status: result.status, confirmAction: null })
-    } catch (error) {
-      setMessage(`坚果云同步失败：${errorMessage(error)}`)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const closeSyncDialog = () => {
-    if (syncActionBusy) return
-    setSyncDialog(null)
-    setSyncProgress(null)
-  }
-
-  const cancelSyncDialog = () => {
-    if (syncActionBusy) return
-    setSyncDialog(null)
-    setSyncProgress(null)
-    setMessage('已取消同步')
-  }
-
-  const requestSyncAction = (action: 'upload' | 'download') => {
-    if (!syncDialog) return
-    const needsConfirm = action === 'upload'
-      ? syncDialog.status.state === 'remote-newer' || syncDialog.status.conflict
-      : syncDialog.status.state === 'local-newer' || syncDialog.status.conflict
-    if (needsConfirm && syncDialog.confirmAction !== action) {
-      setSyncDialog({ ...syncDialog, confirmAction: action })
+  const refreshSyncCenterStatuses = async (rows = syncRows) => {
+    const rootPaths = rows.filter((row) => row.available).map((row) => row.rootPath)
+    if (!rootPaths.length) {
+      setSyncCenterMessage('没有可检查的项目')
       return
     }
-    void runSyncAction(action, needsConfirm)
+    setSyncCenterLoading(true)
+    setSyncCenterMessage('')
+    setSyncRows((current) => markRowsChecking(current, rootPaths))
+    try {
+      const result = await window.invoiceManager.getWebdavProjectSyncStatuses(rootPaths)
+      setSyncRows((current) => applySyncProjectStatusItems(current, result.items))
+      const failedCount = result.items.filter((item) => item.error).length
+      if (failedCount > 0) setSyncCenterMessage(`${failedCount} 个项目检查失败，可在列表中查看原因`)
+    } catch (error) {
+      setSyncCenterMessage(`检查同步状态失败：${errorMessage(error)}`)
+    } finally {
+      setSyncCenterLoading(false)
+    }
   }
 
-  const runSyncAction = async (action: 'upload' | 'download', force: boolean) => {
-    if (!project) return
+  const openSyncCenter = async () => {
+    setOpenToolbarMenu(null)
+    setSyncCenterOpen(true)
+    setSyncCenterMessage('')
+    setSyncProgress(null)
+    setSyncCenterLoading(true)
+    try {
+      if (dirty && !(await save())) return
+      const recentStatuses = await window.invoiceManager.getRecentProjectStatuses()
+      const projects = session && !recentStatuses.some((item) => item.rootPath.toLowerCase() === session.rootPath.toLowerCase())
+        ? [{
+            name: session.project.name,
+            rootPath: session.rootPath,
+            lastOpenedAt: session.project.updatedAt,
+            available: true,
+          }, ...recentStatuses]
+        : recentStatuses
+      const rows = createSyncProjectRows(projects, session?.rootPath)
+      setSyncRows(rows)
+      if (webdavSyncAvailable) {
+        await refreshSyncCenterStatuses(rows)
+      } else {
+        setSyncCenterMessage('云同步配置完整后才能检查项目状态')
+      }
+    } catch (error) {
+      setSyncCenterMessage(`打开同步中心失败：${errorMessage(error)}`)
+    } finally {
+      setSyncCenterLoading(false)
+    }
+  }
+
+  const closeSyncCenter = () => {
+    if (syncActionBusy || syncCenterLoading) return
+    setSyncCenterOpen(false)
+    setSyncProgress(null)
+  }
+
+  const toggleSyncProject = (rootPath: string, checked: boolean) => {
+    setSyncRows((current) => current.map((row) => (
+      row.rootPath === rootPath && row.available ? { ...row, checked } : row
+    )))
+  }
+
+  const setAllSyncProjectsChecked = (checked: boolean) => {
+    setSyncRows((current) => current.map((row) => (
+      row.available ? { ...row, checked } : row
+    )))
+  }
+
+  const runSelectedSyncAction = async (action: 'upload' | 'download') => {
+    const selectedRows = syncRows.filter((row) => row.available && row.checked)
+    if (!selectedRows.length) {
+      setSyncCenterMessage('请先选择要同步的项目')
+      return
+    }
+    const forceRequired = selectedRows.some((row) => (
+      action === 'upload'
+        ? row.status?.state === 'remote-newer' || row.status?.conflict
+        : row.status?.state === 'local-newer' || row.status?.conflict
+    ))
+    if (forceRequired) {
+      const confirmed = window.confirm(action === 'upload'
+        ? '所选项目中存在云端较新或冲突项，继续上传会用本地项目覆盖云端版本。确认继续？'
+        : '所选项目中存在本地较新或冲突项，继续下载会先备份再用云端版本覆盖本地项目。确认继续？')
+      if (!confirmed) return
+    }
+    const rootPaths = selectedRows.map((row) => row.rootPath)
     setSyncActionBusy(true)
+    setSyncCenterMessage('')
     setSyncProgress({
       action,
-      phase: 'start',
+      phase: 'project',
       current: 0,
-      total: 1,
-      message: action === 'upload' ? '正在准备上传' : '正在准备下载',
+      total: rootPaths.length,
+      message: action === 'upload' ? '正在准备上传所选项目' : '正在准备下载所选项目',
     })
+    setSyncRows((current) => current.map((row) => (
+      rootPaths.includes(row.rootPath)
+        ? { ...row, statusKind: 'checking', statusText: action === 'upload' ? '上传中' : '下载中', error: undefined }
+        : row
+    )))
     try {
       const result = action === 'upload'
-        ? await window.invoiceManager.uploadCurrentProjectWebdav(project, force)
-        : await window.invoiceManager.downloadCurrentProjectWebdav(project, force)
-      if (result.session) {
-        setSession(result.session)
-        setDirty(false)
+        ? await window.invoiceManager.uploadWebdavProjects(rootPaths, forceRequired)
+        : await window.invoiceManager.downloadWebdavProjects(rootPaths, forceRequired)
+      for (const item of result.items) {
+        if (item.session) {
+          setSession(item.session)
+          setDirty(false)
+          setAllProjectsSummary(null)
+        }
+        if (item.settings) setAppSettings(item.settings)
       }
-      if (result.settings) setAppSettings(result.settings)
-      setSyncDialog(null)
+      setSyncRows((current) => applySyncProjectStatusItems(current, result.items))
       setSyncProgress(null)
-      showSuccessMessage(action === 'upload' ? '已上传当前项目到坚果云' : '已从坚果云下载当前项目')
+      const failedCount = result.items.filter((item) => item.error).length
+      if (failedCount > 0) {
+        setSyncCenterMessage(`${failedCount} 个项目${action === 'upload' ? '上传' : '下载'}失败，可在列表中查看原因`)
+      } else {
+        showSuccessMessage(action === 'upload' ? '已上传所选项目到坚果云' : '已从坚果云下载所选项目')
+      }
     } catch (error) {
       setSyncProgress(null)
       setMessage(`坚果云同步失败：${errorMessage(error)}`)
@@ -1123,30 +1200,13 @@ export default function App() {
                 <path d="M1072.147851 406.226367c-6.331285-33.456782-26.762037-55.073399-52.047135-55.073399-0.323417 0-0.651455 0.003081-0.830105 0.009241l-4.655674 0c-73.124722 0-132.618162-59.491899-132.618162-132.618162 0-23.731152 11.447443-50.336101 11.546009-50.565574 13.104573-29.498767 3.023185-65.672257-23.427755-84.127081l-1.601687-1.127342-134.400039-74.661726-1.700252-0.745401c-8.753836-3.805547-18.334698-5.735272-28.479231-5.735272-20.789593 0-41.235746 8.344174-54.683758 22.306575-14.741683 15.216028-65.622973 58.649474-104.721083 58.649474-39.450789 0-90.633935-44.286652-105.438762-59.784516-13.518857-14.247316-34.128258-22.753199-55.127302-22.753199-9.945862 0-19.354234 1.861961-27.958682 5.531982l-1.746455 0.74078-139.141957 76.431283-1.643269 1.139662c-26.537186 18.437884-36.675557 54.579032-23.584845 84.062398 0.115506 0.264895 11.579891 26.725075 11.579891 50.634877 0 73.126262-59.491899 132.618162-132.618162 132.618162l-4.581749 0c-0.318797-0.00616-0.636055-0.01078-0.951772-0.01078-25.260456 0-45.672728 21.618157-52.002472 55.0811-0.462025 2.453354-11.313456 60.622322-11.313456 106.117939 0 45.494078 10.85143 103.659965 11.314996 106.119479 6.334365 33.458322 26.758957 55.076479 52.036353 55.076479 0.320337 0 0.651455-0.00616 0.842426-0.012321l4.655674 0c73.126262 0 132.618162 59.491899 132.618162 132.616622 0 23.760413-11.444363 50.333021-11.546009 50.565574-13.093793 29.474125-3.041666 65.646075 23.395414 84.151722l1.569346 1.093459 131.838879 73.726895 1.675611 0.7377c8.750757 3.84251 18.305437 5.790715 28.397607 5.790715 21.082208 0 41.676209-8.706094 55.0888-23.290689 18.724339-20.347588 69.527086-62.362616 107.04815-62.362616 40.625872 0 92.72537 47.100385 107.759669 63.583903 13.441852 14.831008 34.176001 23.689571 55.470741 23.695731l0.00616 0c9.895039 0 19.27877-1.883523 27.893999-5.598205l1.711034-0.73924 136.659342-75.531873 1.617088-1.128882c26.492523-18.456365 36.601633-54.600594 23.538642-84.016195-0.115506-0.267974-11.595291-27.082374-11.595291-50.67646 0-73.124722 59.49344-132.616622 132.618162-132.616622l4.517066-0.00154c0.300316 0.00616 0.599092 0.009241 0.899409 0.009241 25.331299-0.00154 45.785153-21.619697 52.107197-55.054918 0.112426-0.589852 11.325776-59.507301 11.325776-106.14104C1083.464388 466.640776 1072.609877 408.67356 1072.147851 406.226367zM377.486862 945.656142l-115.32764-64.487932c5.082277-13.052211 15.437801-43.51815 15.437801-75.017486 0-109.382917-84.176364-199.816642-192.587488-208.134635-2.647404-15.427021-8.873963-54.967133-8.873963-85.667166 0-30.65691 6.223479-70.232445 8.869343-85.671786 108.415744-8.311832 192.592108-98.745557 192.592108-208.134635 0-31.416171-10.300081-61.797405-15.371577-74.854236l122.721583-67.40331c0.003081 0 0.00462 0.00154 0.007701 0.00154 4.423121 4.518606 22.121764 22.080182 46.558275 39.493911 39.929754 28.46229 77.952885 42.894416 113.014434 42.894416 34.716571 0 72.437845-14.151831 112.115025-42.06431 24.282503-17.07953 41.896442-34.302288 46.308782-38.74543 0.009241-0.00154 0.018481-0.00462 0.026182-0.00616l118.301542 65.726159c-5.077657 13.055291-15.416239 43.499669-15.416239 74.958962 0 109.389077 84.174824 199.822802 192.590568 208.134635 2.645865 15.462442 8.872423 55.107281 8.872423 85.671786 0 30.687711-6.223479 70.241685-8.869343 85.673326C890.042174 606.334084 805.86427 696.767809 805.86427 806.158426c0 31.450053 10.317022 61.851309 15.393138 74.903519l-119.783103 66.198965c-5.168521-5.490399-22.603811-23.363073-46.740005-41.288109-40.701336-30.224145-79.662378-45.549521-115.800446-45.549521-35.79155 0-74.458435 15.038919-114.927219 44.694774C400.22004 922.554885 382.666163 940.255068 377.486862 945.656142zM731.271848 511.646647c0-105.803762-86.081448-191.88059-191.888289-191.88059-105.803762 0-191.88059 86.076827-191.88059 191.88059 0 105.803762 86.076827 191.882129 191.88059 191.882129C645.19194 703.528777 731.271848 617.450409 731.271848 511.646647zM539.383558 395.903184c63.825696 0 115.751164 51.922387 115.751164 115.743463 0 63.825696-51.925468 115.751164-115.751164 115.751164-63.821076 0-115.743463-51.925468-115.743463-115.751164C423.640095 447.824031 475.562482 395.903184 539.383558 395.903184z" />
               </svg>
             </button>
-            <div className="toolbar-menu-wrap">
-              <Button
-                className="sync-button"
-                disabled={busy}
-                onClick={() => setOpenToolbarMenu(openToolbarMenu === 'sync' ? null : 'sync')}
-              >
-                同步
-              </Button>
-              {openToolbarMenu === 'sync' && (
-                <div className="toolbar-menu">
-                  <button type="button" onClick={() => void importSyncPackage()}>
-                    从文件导入项目
-                  </button>
-                  <button type="button" disabled={!project || readOnly} onClick={() => void exportSyncPackage()}>
-                    导出项目同步包
-                  </button>
-                  {webdavSyncAvailable && (
-                    <button type="button" disabled={!project || readOnly} onClick={() => void syncWithWebdav()}>
-                      与坚果云同步
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
+            <Button
+              className="sync-button"
+              disabled={busy}
+              onClick={() => void openSyncCenter()}
+            >
+              同步
+            </Button>
             <Button className="export-button" appearance="primary" disabled={!project || session?.readOnly || busy} onClick={openExportDialog}>导出</Button>
           </div>
         </header>
@@ -1223,46 +1283,24 @@ export default function App() {
             </div>
             {viewMode === 'table' ? <div className="table-scroll">
               <table className="expense-table">
-                <colgroup>
-                  <col className="col-category" />
-                  <col className="col-date" />
-                  <col className="col-name" />
-                  <col className="col-price" />
-                  <col className="col-tax" />
-                  <col className="col-total" />
-                  <col className="col-payment" />
-                  <col className="col-payer" />
-                  <col className="col-reimbursed" />
-                  <col className="col-attachment" />
-                  <col className="col-attachment" />
-                  <col className="col-attachment" />
-                  <col className="col-note" />
-                  <col className="col-actions" />
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th rowSpan={2}>类别</th><th rowSpan={2}>日期</th><th rowSpan={2}>详细名称</th>
-                    <th colSpan={3}>金额</th><th rowSpan={2}>实际付款</th><th rowSpan={2}>实际付款人</th>
-                    <th rowSpan={2}>已报销</th><th className="attachment-column attachment-group-heading" colSpan={3}>附件</th>
-                    <th rowSpan={2}>备注</th><th rowSpan={2} className="action-subheading">操作</th>
-                  </tr>
-                  <tr><th>价格</th><th>税费</th><th>总价</th><th className="attachment-column attachment-subheading">发票</th><th className="attachment-subheading">支付截图</th><th className="attachment-subheading">其他附件</th></tr>
-                </thead>
+                <ConfiguredTableHeader config={tableConfig} />
                 <tbody>
                   {visibleExpenses.map((expense) => (
                     <ExpenseRow
                       key={expense.id}
                       expense={expense}
                       project={project}
-                      payerNames={appSettings.payerNames}
+                      payerNames={projectPayerNames}
                       readOnly={readOnly}
                       onUpdate={updateExpense}
+                      columns={tableColumns}
+                      onCustomUpdate={updateCustomExpense}
                       onRemove={(expenseId) => setRemovalRequest({ kind: 'expense', expenseId })}
                       onManage={(kind) => setAttachmentDialog({ expenseId: expense.id, kind })}
                     />
                   ))}
                   {!visibleExpenses.length && (
-                    <tr><td colSpan={14} className="empty-row">{project.expenses.length ? '没有符合筛选条件的明细' : '点击右下角“+”开始录入'}</td></tr>
+                    <tr><td colSpan={Math.max(1, tableColumns.length)} className="empty-row">{project.expenses.length ? '没有符合筛选条件的明细' : '点击右下角“+”开始录入'}</td></tr>
                   )}
                 </tbody>
               </table>
@@ -1549,7 +1587,7 @@ export default function App() {
                           <DateInput disabled={readOnly} value={editingExpense.date} onChange={(value) => updateExpense(editingExpense.id, 'date', value)} />
                         </Field>
                         <Field label="实际付款人">
-                          <PayerSelect expense={editingExpense} payerNames={appSettings.payerNames} readOnly={readOnly} onUpdate={updateExpense} />
+                          <PayerSelect expense={editingExpense} payerNames={projectPayerNames} readOnly={readOnly} onUpdate={updateExpense} />
                         </Field>
                       </div>
                       <div className="expense-editor-row amount-status">
@@ -1587,6 +1625,9 @@ export default function App() {
                       />
                     </div>
                   </div>
+                  {tableColumns.some((column) => !column.builtin) && <div className="expense-editor-row three">
+                    {tableColumns.filter((column) => !column.builtin).map((column) => <Field key={column.id} label={column.name}><CustomFieldControl column={column} expense={editingExpense} project={project} readOnly={readOnly} onChange={(value) => updateCustomExpense(editingExpense.id, column.id, value)} /></Field>)}
+                  </div>}
                   <div className="editor-evidence-heading">
                     <strong>凭证</strong>
                     <span>支持 PDF、JPG、PNG 和 WebP，可一次拖入多份</span>
@@ -1629,6 +1670,10 @@ export default function App() {
                   value={projectNameDialog ?? ''}
                   onChange={(_event, data) => setProjectNameDialog(data.value)}
                 />
+              </Field>
+              <Field label="表格模板">
+                <CustomSelect value={newProjectTemplateId || getDefaultTableTemplateId(appSettings)} onChange={setNewProjectTemplateId}
+                  options={getTableTemplates(appSettings).map((template) => ({ value: template.id, label: template.name }))} ariaLabel="新项目表格模板" />
               </Field>
             </DialogContent>
             <DialogActions>
@@ -1816,75 +1861,96 @@ export default function App() {
           </DialogBody>
         </DialogSurface>
       </Dialog>
-      <Dialog open={syncDialog !== null} onOpenChange={(_event, data) => !data.open && closeSyncDialog()}>
-        <DialogSurface className="sync-dialog">
+      <Dialog open={syncCenterOpen} onOpenChange={(_event, data) => !data.open && closeSyncCenter()}>
+        <DialogSurface className="sync-center-dialog">
           <DialogBody>
             <DialogTitle>
               <div className="sync-dialog-title">
-                <span>与坚果云同步</span>
-                <small>{project?.name}</small>
+                <span>同步中心</span>
               </div>
             </DialogTitle>
             <DialogContent>
-              {renderedSyncDialog && (
-                <div className="sync-dialog-content">
-                  <div className={`sync-state-banner ${renderedSyncDialog.status.state}`}>
-                    <strong>{syncStateLabel(renderedSyncDialog.status)}</strong>
-                    <span>{syncStateDescription(renderedSyncDialog.status)}</span>
+              <div className="sync-center-content">
+                {!webdavSyncAvailable && (
+                  <div className="sync-center-message">云同步未配置完整，请先在设置中填写坚果云 WebDAV 信息。</div>
+                )}
+                <div className="sync-center-toolbar">
+                  <Checkbox
+                    checked={allAvailableSyncProjectsChecked}
+                    disabled={!availableSyncProjectCount || syncCenterLoading || syncActionBusy}
+                    onChange={(_event, data) => setAllSyncProjectsChecked(Boolean(data.checked))}
+                    label={`全选可用项目（${selectedSyncProjectCount}/${availableSyncProjectCount}）`}
+                  />
+                </div>
+                <div className="sync-project-table" aria-label="项目同步状态列表">
+                  <div className="sync-project-header">
+                    <span>选择</span>
+                    <span>项目</span>
+                    <span>本地</span>
+                    <span>云端</span>
+                    <span>状态</span>
                   </div>
-                  <div className="sync-status-grid">
-                    <SyncStatusItem label="本地 revision" value={String(renderedSyncDialog.status.localRevision)} />
-                    <SyncStatusItem label="本地更新时间" value={formatSyncDate(renderedSyncDialog.status.localUpdatedAt)} />
-                    <SyncStatusItem label="远端 revision" value={renderedSyncDialog.status.remoteExists ? String(renderedSyncDialog.status.remoteRevision) : '不存在'} />
-                    <SyncStatusItem label="远端更新时间" value={renderedSyncDialog.status.remoteUpdatedAt ? formatSyncDate(renderedSyncDialog.status.remoteUpdatedAt) : '不存在'} />
-                    <SyncStatusItem label="本地上传状态" value={localUploadStatusText(renderedSyncDialog.status)} tone={renderedSyncDialog.status.localHasUnuploadedChanges ? 'warning' : 'normal'} />
-                    <SyncStatusItem label="远端下载状态" value={remoteDownloadStatusText(renderedSyncDialog.status)} tone={renderedSyncDialog.status.remoteHasUndownloadedChanges ? 'warning' : 'normal'} />
-                  </div>
-                  {syncActionBusy && syncProgress && (
-                    <div className="sync-progress-panel" role="status" aria-live="polite">
-                      <div className="sync-progress-head">
-                        <span>{syncProgress.message}</span>
-                        <strong>{syncProgressPercent(syncProgress)}%</strong>
-                      </div>
-                      <div className="sync-progress-track">
-                        <span style={{ width: `${syncProgressPercent(syncProgress)}%` }} />
-                      </div>
-                    </div>
-                  )}
-                  {renderedSyncDialog.confirmAction && (
-                    <div className="sync-confirm-panel">
-                      <strong>{renderedSyncDialog.confirmAction === 'upload' ? '确认上传覆盖远端？' : '确认下载覆盖本地？'}</strong>
-                      <span>
-                        {renderedSyncDialog.confirmAction === 'upload'
-                          ? '远端较新或存在冲突，继续上传会以当前项目替换远端正式版本。'
-                          : '本地较新或存在冲突，继续下载会先自动备份，再用远端版本覆盖当前项目。'}
+                  {syncRows.length === 0 ? (
+                    <div className="sync-project-empty">暂无项目记录</div>
+                  ) : syncRows.map((row) => (
+                    <div key={row.rootPath} className={`sync-project-row ${row.statusKind}`}>
+                      <Checkbox
+                        checked={row.checked}
+                        disabled={!row.available || syncCenterLoading || syncActionBusy}
+                        onChange={(_event, data) => toggleSyncProject(row.rootPath, Boolean(data.checked))}
+                      />
+                      <span className="sync-project-main">
+                        <strong>{row.name}</strong>
+                        <span>{row.rootPath}</span>
+                      </span>
+                      <span className="sync-project-meta">
+                        {row.status ? (
+                          <SyncProjectMeta display={syncProjectLocalDisplay(row.status)} />
+                        ) : (
+                          <span className="sync-project-empty-cell">{row.available ? '-' : '不可用'}</span>
+                        )}
+                      </span>
+                      <span className="sync-project-meta">
+                        {row.status ? (
+                          <SyncProjectMeta display={syncProjectCloudDisplay(row.status)} />
+                        ) : (
+                          <span className="sync-project-empty-cell">{row.error ? '失败' : '-'}</span>
+                        )}
+                      </span>
+                      <span className="sync-project-status">
+                        <strong>{row.statusText}</strong>
+                        {row.error ? (
+                          <span>{row.error}</span>
+                        ) : !row.status && !row.available ? (
+                          <span>请重新定位</span>
+                        ) : null}
                       </span>
                     </div>
-                  )}
+                  ))}
                 </div>
-              )}
+                {syncActionBusy && syncProgress && (
+                  <div className="sync-progress-panel" role="status" aria-live="polite">
+                    <div className="sync-progress-head">
+                      <span>{syncProgress.message}</span>
+                      <strong>{syncProgressPercent(syncProgress)}%</strong>
+                    </div>
+                    <div className="sync-progress-track">
+                      <span style={{ width: `${syncProgressPercent(syncProgress)}%` }} />
+                    </div>
+                  </div>
+                )}
+                {syncCenterMessage && <div className="sync-center-message">{syncCenterMessage}</div>}
+              </div>
             </DialogContent>
             <DialogActions>
-              {renderedSyncDialog?.confirmAction ? (
-                <>
-                  <Button disabled={syncActionBusy} onClick={() => setSyncDialog({ ...renderedSyncDialog, confirmAction: null })}>返回</Button>
-                  <Button appearance="primary" disabled={syncActionBusy} onClick={() => runSyncAction(renderedSyncDialog.confirmAction!, true)}>
-                    {syncActionBusy ? '处理中...' : renderedSyncDialog.confirmAction === 'upload' ? '继续上传' : '继续下载'}
-                  </Button>
-                </>
-              ) : renderedSyncDialog?.status.state === 'latest' ? (
-                <Button appearance="primary" disabled={syncActionBusy} onClick={closeSyncDialog}>关闭</Button>
-              ) : (
-                <>
-                  <Button disabled={syncActionBusy} onClick={cancelSyncDialog}>取消</Button>
-                  {renderedSyncDialog?.status.remoteExists && (
-                    <Button disabled={syncActionBusy} onClick={() => requestSyncAction('download')}>从坚果云下载到当前项目</Button>
-                  )}
-                  <Button appearance="primary" disabled={syncActionBusy} onClick={() => requestSyncAction('upload')}>
-                    上传当前项目到坚果云
-                  </Button>
-                </>
-              )}
+              <Button disabled={syncActionBusy || syncCenterLoading} onClick={closeSyncCenter}>关闭</Button>
+              <Button disabled={!webdavSyncAvailable || syncCenterLoading || syncActionBusy} onClick={() => void refreshSyncCenterStatuses()}>
+                重新检查
+              </Button>
+              <Button disabled={!webdavSyncAvailable || syncActionBusy || syncCenterLoading || !selectedSyncProjectCount} onClick={() => void runSelectedSyncAction('download')}>下载所选项目</Button>
+              <Button appearance="primary" disabled={!webdavSyncAvailable || syncActionBusy || syncCenterLoading || !selectedSyncProjectCount} onClick={() => void runSelectedSyncAction('upload')}>
+                上传所选项目
+              </Button>
             </DialogActions>
           </DialogBody>
         </DialogSurface>
@@ -1906,50 +1972,17 @@ export default function App() {
   )
 }
 
-function syncStateLabel(status: WebdavSyncStatus): string {
-  if (status.state === 'remote-missing') return '远端不存在'
-  if (status.state === 'latest') return '已是最新'
-  if (status.state === 'local-newer') return '本地较新'
-  if (status.state === 'remote-newer') return '远端较新'
-  return '存在冲突'
-}
-
-function syncStateDescription(status: WebdavSyncStatus): string {
-  if (status.state === 'remote-missing') return '坚果云上还没有这个项目，可以上传当前项目创建远端版本。'
-  if (status.state === 'latest') return '本地和坚果云上的项目 revision 与校验和一致。'
-  if (status.state === 'local-newer') return '本地 revision 更高，可以上传当前项目。'
-  if (status.state === 'remote-newer') return '远端 revision 更高，可以下载远端项目。'
-  return 'revision 相同但校验和不同，需要选择上传或下载，不会自动合并。'
-}
-
-function formatSyncDate(value: string): string {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
-}
-
-function localUploadStatusText(status: WebdavSyncStatus): string {
-  if (!status.remoteExists) return '待首次上传'
-  if (status.localHasUnuploadedChanges) return status.conflict ? '需处理冲突' : '有本地新版本'
-  return '已同步'
-}
-
-function remoteDownloadStatusText(status: WebdavSyncStatus): string {
-  if (!status.remoteExists) return '无远端版本'
-  if (status.remoteHasUndownloadedChanges) return status.conflict ? '需处理冲突' : '有远端新版本'
-  return '已同步'
-}
-
 function syncProgressPercent(progress: WebdavSyncProgress): number {
   if (progress.total <= 0) return 0
   return Math.min(100, Math.max(0, Math.round((progress.current / progress.total) * 100)))
 }
 
-function SyncStatusItem({ label, value, tone = 'normal' }: { label: string; value: string; tone?: 'normal' | 'warning' | 'danger' }) {
+function SyncProjectMeta({ display }: { display: { primary: string; secondary: string; title: string } }) {
   return (
-    <div className={`sync-status-item ${tone}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
+    <>
+      <strong title={display.title}>{display.primary}</strong>
+      <span>{display.secondary}</span>
+    </>
   )
 }
 
@@ -2062,6 +2095,8 @@ function DateInput({ disabled, value, onChange }: { disabled: boolean; value: st
 }
 
 interface ExpenseRowProps {
+  columns: TableColumn[]
+  onCustomUpdate(expenseId: string, columnId: string, value: CustomValue): void
   expense: ExpenseItem
   project: Project
   payerNames: string[]
@@ -2071,36 +2106,29 @@ interface ExpenseRowProps {
   onManage(kind: AttachmentKind): void
 }
 
-function ExpenseRow({ expense, project, payerNames, readOnly, onUpdate, onRemove, onManage }: ExpenseRowProps) {
-  const invoiceCount = allocationCount(project.invoiceAllocations, expense.id)
-  const paymentCount = allocationCount(project.paymentAllocations, expense.id)
-  const otherCount = allocationCount(project.otherAllocations, expense.id)
-  return (
-    <tr>
-      <td><CustomSelect size="small" disabled={readOnly} value={expense.categoryId} onChange={(value) => onUpdate(expense.id, 'categoryId', value)} options={project.categories.map((category) => ({ value: category.id, label: category.name }))} /></td>
-      <td><DateInput disabled={readOnly} value={expense.date} onChange={(value) => onUpdate(expense.id, 'date', value)} /></td>
-      <td><Input disabled={readOnly} value={expense.name} placeholder="物品名称" onChange={(_event, data) => onUpdate(expense.id, 'name', data.value)} /></td>
-      <td><MoneyInput disabled={readOnly} valueCents={expense.priceCents} onChange={(value) => onUpdate(expense.id, 'priceCents', value)} /></td>
-      <td><MoneyInput disabled={readOnly} valueCents={expense.taxCents} onChange={(value) => onUpdate(expense.id, 'taxCents', value)} /></td>
-      <td className="money-cell">{formatMoney(expenseTotalCents(expense))}</td>
-      <td className="money-cell">{formatMoney(expenseTotalCents(expense))}</td>
-      <td>
-        <PayerSelect expense={expense} payerNames={payerNames} readOnly={readOnly} onUpdate={onUpdate} />
-      </td>
-      <td className="checkbox-cell"><Checkbox disabled={readOnly} checked={expense.reimbursed} onChange={(_event, data) => onUpdate(expense.id, 'reimbursed', Boolean(data.checked))} /></td>
-      <td className="attachment-column attachment-cell-column"><AttachmentCell count={invoiceCount} kind="invoice" readOnly={readOnly} onManage={() => onManage('invoice')} /></td>
-      <td className="attachment-cell-column"><AttachmentCell count={paymentCount} kind="payment" readOnly={readOnly} onManage={() => onManage('payment')} /></td>
-      <td className="attachment-cell-column"><AttachmentCell count={otherCount} kind="other" readOnly={readOnly} onManage={() => onManage('other')} /></td>
-      <td><Input disabled={readOnly} value={expense.note} onChange={(_event, data) => onUpdate(expense.id, 'note', data.value)} /></td>
-      <td className="row-action-cell">
-        <button className="row-delete" type="button" aria-label="删除明细" title="删除明细" disabled={readOnly} onClick={() => onRemove(expense.id)}>
-          <svg aria-hidden="true" viewBox="0 0 16 16">
-            <path d="M3.5 3.5l9 9m0-9-9 9" />
-          </svg>
-        </button>
-      </td>
-    </tr>
-  )
+function ExpenseRow({ expense, project, payerNames, columns, readOnly, onUpdate, onCustomUpdate, onRemove, onManage }: ExpenseRowProps) {
+  const cell = (column: TableColumn) => {
+    const key = column.builtin
+    if (!key) return <td key={column.id}><CustomFieldControl column={column} expense={expense} project={project} readOnly={readOnly} onChange={(value) => onCustomUpdate(expense.id, column.id, value)} /></td>
+    switch (key) {
+      case 'category': return <td key={column.id}><CustomSelect ariaLabel={column.name} size="small" disabled={readOnly} value={expense.categoryId} onChange={(value) => onUpdate(expense.id, 'categoryId', value)} options={project.categories.map((category) => ({ value: category.id, label: category.name }))} /></td>
+      case 'date': return <td key={column.id}><DateInput disabled={readOnly} value={expense.date} onChange={(value) => onUpdate(expense.id, 'date', value)} /></td>
+      case 'name': return <td key={column.id}><Input aria-label={column.name} disabled={readOnly} value={expense.name} placeholder="物品名称" onChange={(_event, data) => onUpdate(expense.id, 'name', data.value)} /></td>
+      case 'price': return <td key={column.id}><MoneyInput disabled={readOnly} valueCents={expense.priceCents} onChange={(value) => onUpdate(expense.id, 'priceCents', value)} /></td>
+      case 'tax': return <td key={column.id}><MoneyInput disabled={readOnly} valueCents={expense.taxCents} onChange={(value) => onUpdate(expense.id, 'taxCents', value)} /></td>
+      case 'total': case 'actualPayment': return <td key={column.id} className="money-cell">{formatMoney(expenseTotalCents(expense))}</td>
+      case 'actualPayer': return <td key={column.id}><PayerSelect expense={expense} payerNames={payerNames} readOnly={readOnly} onUpdate={onUpdate} /></td>
+      case 'reimbursed': return <td key={column.id} className="checkbox-cell"><Checkbox disabled={readOnly} checked={expense.reimbursed} onChange={(_event, data) => onUpdate(expense.id, 'reimbursed', Boolean(data.checked))} /></td>
+      case 'invoice': case 'payment': case 'other': {
+        const allocations = key === 'invoice' ? project.invoiceAllocations : key === 'payment' ? project.paymentAllocations : project.otherAllocations
+        return <td key={column.id} className={key === 'invoice' ? 'attachment-column attachment-cell-column' : 'attachment-cell-column'}><AttachmentCell count={allocationCount(allocations, expense.id)} kind={key} readOnly={readOnly} onManage={() => onManage(key)} /></td>
+      }
+      case 'note': return <td key={column.id}><Input aria-label={column.name} disabled={readOnly} value={expense.note} onChange={(_event, data) => onUpdate(expense.id, 'note', data.value)} /></td>
+      case 'actions': return <td key={column.id} className="row-action-cell"><button className="row-delete" type="button" aria-label="删除明细" title="删除明细" disabled={readOnly} onClick={() => onRemove(expense.id)}><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3.5 3.5l9 9m0-9-9 9" /></svg></button></td>
+      default: return <td key={column.id} />
+    }
+  }
+  return <tr>{columns.map(cell)}</tr>
 }
 
 interface ExpenseCardProps {

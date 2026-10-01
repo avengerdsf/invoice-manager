@@ -34,6 +34,9 @@ const IPC_CHANNELS = {
   getWebdavSyncStatus: 'sync:webdav-status',
   uploadCurrentProjectWebdav: 'sync:webdav-upload',
   downloadCurrentProjectWebdav: 'sync:webdav-download',
+  getWebdavProjectSyncStatuses: 'sync:webdav-project-statuses',
+  uploadWebdavProjects: 'sync:webdav-projects-upload',
+  downloadWebdavProjects: 'sync:webdav-projects-download',
   webdavSyncProgress: 'sync:webdav-progress',
   deleteCurrentProject: 'project:delete-current',
   getAllProjectsSummary: 'project:summary-all',
@@ -54,7 +57,7 @@ const api: InvoiceManagerApi = {
   saveWorkspaceState: (openProjectPaths: string[], activeProjectPath: string | null) => (
     ipcRenderer.invoke(IPC_CHANNELS.saveWorkspaceState, openProjectPaths, activeProjectPath)
   ),
-  createProject: (name: string) => ipcRenderer.invoke(IPC_CHANNELS.createProject, name),
+  createProject: (name: string, templateId?: string) => ipcRenderer.invoke(IPC_CHANNELS.createProject, name, templateId),
   openProject: () => ipcRenderer.invoke(IPC_CHANNELS.openProject),
   openRecentProject: (rootPath: string) => ipcRenderer.invoke(IPC_CHANNELS.openRecentProject, rootPath),
   closeCurrentProject: () => ipcRenderer.invoke(IPC_CHANNELS.closeCurrentProject),
@@ -79,6 +82,9 @@ const api: InvoiceManagerApi = {
   getWebdavSyncStatus: (project: Project) => ipcRenderer.invoke(IPC_CHANNELS.getWebdavSyncStatus, project),
   uploadCurrentProjectWebdav: (project: Project, force: boolean) => ipcRenderer.invoke(IPC_CHANNELS.uploadCurrentProjectWebdav, project, force),
   downloadCurrentProjectWebdav: (project: Project, force: boolean) => ipcRenderer.invoke(IPC_CHANNELS.downloadCurrentProjectWebdav, project, force),
+  getWebdavProjectSyncStatuses: (rootPaths: string[]) => ipcRenderer.invoke(IPC_CHANNELS.getWebdavProjectSyncStatuses, rootPaths),
+  uploadWebdavProjects: (rootPaths: string[], force: boolean) => ipcRenderer.invoke(IPC_CHANNELS.uploadWebdavProjects, rootPaths, force),
+  downloadWebdavProjects: (rootPaths: string[], force: boolean) => ipcRenderer.invoke(IPC_CHANNELS.downloadWebdavProjects, rootPaths, force),
   onWebdavSyncProgress: (callback: (progress: WebdavSyncProgress) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: WebdavSyncProgress) => callback(progress)
     ipcRenderer.on(IPC_CHANNELS.webdavSyncProgress, listener)

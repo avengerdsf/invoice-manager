@@ -1,4 +1,6 @@
 import type { AppSettings, ProjectSession, ViewMode, Category, AttachmentKind } from '../shared/models'
+import type { TableConfig } from '../shared/table-config'
+import type { TableTemplate } from '../shared/table-templates'
 
 export type SettingsPage =
   | 'general'
@@ -6,11 +8,14 @@ export type SettingsPage =
   | 'projectHistory'
   | 'sync'
   | 'about'
-  | 'categories'
+  | 'projectTable'
   | 'projectLocation'
+  | 'tableTemplates'
 
 export interface GlobalSettingsDraft {
   payerNames: string[]
+  tableTemplates: TableTemplate[]
+  defaultTableTemplateId: string
   defaultViewMode: ViewMode
   defaultIncludePayments: boolean
   defaultIncludeOtherAttachments: boolean
@@ -35,6 +40,7 @@ export interface GlobalSettingsDraft {
 export interface ProjectSettingsDraft {
   name: string
   categories: Category[]
+  tableConfig: TableConfig
 }
 
 export interface SettingsDraftState {
@@ -65,4 +71,6 @@ export interface PageProps {
   onSessionChange?(session: ProjectSession | null): void
   onAppSettingsChange?(settings: AppSettings): void
   onCloseSettings?(): void
+  onEditorStateChange?(open: boolean): void
+  tableContext?: 'project' | 'template'
 }

@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import { CustomValueSchema, TableConfigSchema } from './table-config'
+import { TableTemplateSchema } from './table-templates'
 
 export const AttachmentKindSchema = z.enum(['invoice', 'payment', 'other'])
 export type AttachmentKind = z.infer<typeof AttachmentKindSchema>
@@ -23,6 +25,7 @@ export const ExpenseItemSchema = z.object({
   actualPayer: z.string().max(80).default(''),
   note: z.string().max(500),
   reimbursed: z.boolean(),
+  customValues: z.record(z.string(), CustomValueSchema).optional(),
 })
 export type ExpenseItem = z.infer<typeof ExpenseItemSchema>
 
@@ -60,6 +63,7 @@ export const ProjectSchema = z.object({
   invoiceAllocations: z.array(AllocationSchema),
   paymentAllocations: z.array(AllocationSchema),
   otherAllocations: z.array(AllocationSchema).default([]),
+  tableConfig: TableConfigSchema.optional(),
 })
 export type Project = z.infer<typeof ProjectSchema>
 
@@ -83,6 +87,8 @@ export type ViewMode = z.infer<typeof ViewModeSchema>
 
 export const AppSettingsSchema = z.object({
   payerNames: PayerNamesSchema.default([]),
+  tableTemplates: z.array(TableTemplateSchema).optional(),
+  defaultTableTemplateId: z.string().optional(),
   recentProjects: z.array(RecentProjectSchema).default([]),
   knownProjectPaths: z.array(z.string().min(1)).default([]),
   lastOpenProjectPaths: z.array(z.string().min(1)).default([]),
@@ -118,6 +124,8 @@ export type AppSettings = z.infer<typeof AppSettingsSchema>
 
 export const AppSettingsUpdateSchema = z.object({
   payerNames: PayerNamesSchema,
+  tableTemplates: z.array(TableTemplateSchema).optional(),
+  defaultTableTemplateId: z.string().optional(),
   defaultViewMode: ViewModeSchema.optional(),
   defaultIncludePayments: z.boolean().optional(),
   defaultIncludeOtherAttachments: z.boolean().optional(),
@@ -229,6 +237,26 @@ export interface WebdavSyncStatusResult {
   status: WebdavSyncStatus
 }
 
+export interface WebdavProjectSyncStatusItem {
+  rootPath: string
+  status?: WebdavSyncStatus
+  error?: string
+}
+
+export interface WebdavProjectSyncStatusesResult {
+  items: WebdavProjectSyncStatusItem[]
+}
+
+export interface WebdavProjectSyncActionItem extends WebdavProjectSyncStatusItem {
+  action: 'upload' | 'download'
+  session?: ProjectSession
+  settings?: AppSettings
+}
+
+export interface WebdavProjectSyncActionResult {
+  items: WebdavProjectSyncActionItem[]
+}
+
 export interface WebdavSyncProgress {
   action: 'status' | 'upload' | 'download'
   phase: string
@@ -304,6 +332,9 @@ export const IPC_CHANNELS = {
   getWebdavSyncStatus: 'sync:webdav-status',
   uploadCurrentProjectWebdav: 'sync:webdav-upload',
   downloadCurrentProjectWebdav: 'sync:webdav-download',
+  getWebdavProjectSyncStatuses: 'sync:webdav-project-statuses',
+  uploadWebdavProjects: 'sync:webdav-projects-upload',
+  downloadWebdavProjects: 'sync:webdav-projects-download',
   webdavSyncProgress: 'sync:webdav-progress',
   deleteCurrentProject: 'project:delete-current',
   getAllProjectsSummary: 'project:summary-all',
@@ -322,7 +353,7 @@ export interface InvoiceManagerApi {
   getSettings(): Promise<AppSettings>
   saveSettings(settings: AppSettingsUpdate): Promise<AppSettings>
   saveWorkspaceState(openProjectPaths: string[], activeProjectPath: string | null): Promise<AppSettings>
-  createProject(name: string): Promise<ProjectSession | null>
+  createProject(name: string, templateId?: string): Promise<ProjectSession | null>
   openProject(): Promise<ProjectSession | null>
   openRecentProject(rootPath: string): Promise<ProjectSession>
   closeCurrentProject(): Promise<void>
@@ -343,6 +374,9 @@ export interface InvoiceManagerApi {
   getWebdavSyncStatus(project: Project): Promise<WebdavSyncStatusResult>
   uploadCurrentProjectWebdav(project: Project, force: boolean): Promise<WebdavSyncResult>
   downloadCurrentProjectWebdav(project: Project, force: boolean): Promise<WebdavSyncResult>
+  getWebdavProjectSyncStatuses(rootPaths: string[]): Promise<WebdavProjectSyncStatusesResult>
+  uploadWebdavProjects(rootPaths: string[], force: boolean): Promise<WebdavProjectSyncActionResult>
+  downloadWebdavProjects(rootPaths: string[], force: boolean): Promise<WebdavProjectSyncActionResult>
   onWebdavSyncProgress(callback: (progress: WebdavSyncProgress) => void): () => void
   deleteCurrentProject(): Promise<AppSettings>
   getAllProjectsSummary(currentProject?: Project): Promise<AllProjectsFundsSummary>

@@ -328,7 +328,7 @@ export async function createSyncSnapshot(
 export async function writeSyncPackageZip(snapshot: SyncSnapshot, destinationPath: string, tempDirectory: string): Promise<void> {
   const { ZipArchive } = await import('archiver')
   await mkdir(tempDirectory, { recursive: true })
-  const temporaryPath = path.join(tempDirectory, `invoice-sync-${snapshot.manifest.projectId}-${Date.now()}.zip`)
+  const temporaryPath = path.join(tempDirectory, `${snapshot.manifest.projectId}-${Date.now()}-invoice-sync.zip`)
   const output = createWriteStream(temporaryPath)
   const archive = new ZipArchive({ zlib: { level: 9 } })
   const completed = new Promise<void>((resolve, reject) => {

@@ -11,8 +11,20 @@ import {
   type Project,
   type ProjectSession,
 } from '../src/shared/models'
+import { getDefaultTableTemplateId, getTableTemplates, validateTableTemplates } from '../src/domain/table-templates'
 
 const MAX_RECENT_PROJECTS = 10
+
+export function readStoredWebdavPassword(
+  encryptedPassword: string,
+  decrypt: (encryptedPassword: string) => string,
+): string {
+  try {
+    return decrypt(encryptedPassword)
+  } catch {
+    throw new Error('保存的 WebDAV 密码无法读取，请重新输入第三方应用密码')
+  }
+}
 
 export class AppSettingsStorage {
   private writeQueue: Promise<void> = Promise.resolve()
@@ -21,20 +33,35 @@ export class AppSettingsStorage {
 
   async read(): Promise<AppSettings> {
     try {
-      return AppSettingsSchema.parse(JSON.parse(await readFile(this.filePath, 'utf8')))
+      return this.withLegacyTemplates(JSON.parse(await readFile(this.filePath, 'utf8')))
     } catch (error) {
       try {
-        return AppSettingsSchema.parse(JSON.parse(await readFile(`${this.filePath}.bak`, 'utf8')))
+        return this.withLegacyTemplates(JSON.parse(await readFile(`${this.filePath}.bak`, 'utf8')))
       } catch {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return AppSettingsSchema.parse({})
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return this.withLegacyTemplates({})
         throw error
       }
     }
   }
 
+  private withLegacyTemplates(raw: unknown): AppSettings {
+    const settings = AppSettingsSchema.parse(raw)
+    if (settings.tableTemplates !== undefined || settings.defaultTableTemplateId !== undefined) {
+      const errors = validateTableTemplates(settings.tableTemplates ?? [], settings.defaultTableTemplateId ?? '')
+      if (errors.length) throw new Error(errors.join('；'))
+    }
+    settings.tableTemplates = getTableTemplates(settings)
+    settings.defaultTableTemplateId = getDefaultTableTemplateId(settings)
+    return settings
+  }
+
   async saveSettings(rawUpdate: unknown): Promise<AppSettings> {
     const settings = await this.read()
     const update = AppSettingsUpdateSchema.parse(rawUpdate)
+    const nextTemplates = update.tableTemplates ?? settings.tableTemplates ?? getTableTemplates(settings)
+    const nextDefaultId = update.defaultTableTemplateId ?? settings.defaultTableTemplateId ?? getDefaultTableTemplateId(settings)
+    const templateErrors = validateTableTemplates(nextTemplates, nextDefaultId)
+    if (templateErrors.length) throw new Error(templateErrors.join('；'))
 
     // 比较被移除的付款人并执行 assertPayersUnused()
     const removedPayerNames = settings.payerNames.filter((payerName) => !update.payerNames.includes(payerName))
@@ -42,6 +69,8 @@ export class AppSettingsStorage {
 
     // 更新允许由用户修改的字段
     settings.payerNames = update.payerNames
+    settings.tableTemplates = getTableTemplates({ tableTemplates: nextTemplates, defaultTableTemplateId: nextDefaultId })
+    settings.defaultTableTemplateId = nextDefaultId
     if (update.defaultViewMode !== undefined) settings.defaultViewMode = update.defaultViewMode
     if (update.defaultIncludePayments !== undefined) settings.defaultIncludePayments = update.defaultIncludePayments
     if (update.defaultIncludeOtherAttachments !== undefined) settings.defaultIncludeOtherAttachments = update.defaultIncludeOtherAttachments
@@ -330,6 +359,8 @@ export class AppSettingsStorage {
     if (!safeStorage.isEncryptionAvailable()) {
       throw new Error('当前系统不可用 Electron 安全存储，无法读取 WebDAV 密码')
     }
-    return safeStorage.decryptString(Buffer.from(encryptedPassword, 'base64'))
+    return readStoredWebdavPassword(encryptedPassword, (value) => (
+      safeStorage.decryptString(Buffer.from(value, 'base64'))
+    ))
   }
 }
